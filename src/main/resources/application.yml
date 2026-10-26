@@ -1,0 +1,36 @@
+server:
+  port: ${PORT:8080}
+  # The PHP was served under /backend/ by IIS. Keep the same paths so the Vue
+  # base URL does not change at cutover.
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: wlwl-backend
+
+  datasource:
+    # utf8mb3 matters: every table is CHARSET=utf8mb3, so connecting as utf8mb4
+    # changes how 4-byte characters are handled versus the PHP (which ran with
+    # SET NAMES utf8 == utf8mb3). Match the original collation deliberately.
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:wlwl}?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&connectionCollation=utf8mb3_general_ci&serverTimezone=${DB_TZ:Asia/Shanghai}
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+      # Long drill JSON payloads live in drilldetail.content (longtext).
+      data-source-properties:
+        cachePrepStmts: true
+        prepStmtCacheSize: 250
+        prepStmtCacheSqlLimit: 2048
+
+  jackson:
+    default-property-inclusion: always   # PHP includes nulls in json_encode output
+    serialization:
+      write-dates-as-timestamps: false
+
+logging:
+  level:
+    root: INFO
+    com.wlwl.backend: DEBUG
+    org.springframework.jdbc.core.JdbcTemplate: DEBUG

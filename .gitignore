@@ -1,0 +1,11 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.log
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Never commit the PHP-side DB credentials file
+etc/db.inc
+*.local.yml
