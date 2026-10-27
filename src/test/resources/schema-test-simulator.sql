@@ -123,3 +123,7 @@ create table competency (
 
 -- drillcontrol.completedDrill is written by timeout.php / action.php / environment.php
 alter table drillcontrol add column if not exists completedDrill int default null;
+
+-- readParams() reads the whole table
+drop table if exists params_int;
+create table params_int (`key` varchar(100) not null primary key, `value` varchar(100) default null);
