@@ -895,7 +895,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
 | `drill/bossreview.php` | 108 | **not ported** — only reached via `action.php` |
-| `drill/post.php` | 60 | **not ported** — POST verb: `drillcontrol` + `runs` by `QUERY_STRING` as `userId` |
+| `drill/post.php` | 60 | **ported + tested** (`DrillPostParityTest`, 6 cases) — POST verb, query string = userId |
 
 `DrillCommon` present: `writeHistory`, `dbg`, `readParams`, `memberWhere`, `currentMembers`,
 `noMoreStaff`, `initMemberValues`, `init_staff_ana`, `highEfficiency`, `lowEfficiency`,
@@ -1063,3 +1063,25 @@ Smaller contract details:
 - `setAway` stores `environment.duration` into `member.away` (a duration, not a countdown).
 - `drilldetail.drillId` has no FK, so an unknown drill still gets a row and the endpoint
   answers 200 — the 204 branch needs a genuinely unreadable row.
+
+## 24. drill/post.php — the POST verb (query string IS the userId)
+
+`POST /backend/drill/?U123` is how `Drill.vue` gets its home screen: `{user, control, runs}`.
+It ignores `mod` completely (read and never used) and keys everything off
+`$_SERVER['QUERY_STRING']`, so `ctx.queryString()` is the only correct source — and the
+client's URL is `/backend/drill/?<userId>`, with the trailing slash before the `?`.
+
+- The **user object is the JOINED** `backenduser` + `company` row. `companyName` and
+  `active` exist in both tables, and `select *` + assoc fetch keeps the LAST one, so the
+  company's values win. `PhpRows`' LinkedHashMap reproduces that for free.
+- **`runs` is only added when a row exists.** A control with zero drills replies with
+  `{user, control}` and no `runs` key at all — not an empty array. The client tolerates it.
+- First contact **creates** the control row (`uniqid`, `createdOn = now()`) and one drill per
+  configured company slot (`runOne`/`runTwo`/`runThree`), each with `seq` 1..n, `run` naming
+  the slot, and `drillStatus` 100. A slot whose `modelId` does not resolve simply produces
+  no drill. The control is then re-read so the reply carries the new id.
+- The gate is `level = 0 AND backenduser.active = 1 AND company.active = 1`: instructors,
+  disabled users, dead companies and unknown ids all get a bodiless **204**.
+- `template.duration` is INT in production but DECIMAL in the test fixture, so the insert
+  coerces it with `PhpJson.num()` — otherwise H2 refuses to put `"0.00"` into an int column
+  while MySQL would have coerced silently.
