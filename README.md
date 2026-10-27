@@ -9,7 +9,7 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **4 of 31** (`staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **4 of 33** (`staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
@@ -18,7 +18,7 @@ the same status codes, and the same authentication quirks.
 | Tests | **65 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`backenduser`, `drilloverview`, and 26 others.
+`backenduser`, `drilloverview`, and 28 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
