@@ -628,3 +628,84 @@ Mitigations, in order of usefulness:
    different database, and the fact that no data is at stake (the module is read-only).
 3. No placeholder, stub or empty handler exists in the Java tree — deliberately. A stub
    returning 200 would conceal the gap instead of exposing it.
+
+## 18. `drilldetail` is an event log of full state snapshots (drill/ architecture)
+
+This is the single most important structural fact for porting `drill/` (5,617 LOC).
+
+`drilldetail` is **append-only**, and **every row contains the complete game state** as
+JSON in `content`. A 42-step drill produced 42 rows totalling ≈6.7 MB, because each
+snapshot embeds the whole history: `content.summary` is a growing array that reaches 40
+entries, so the last row repeats every earlier one. This is why the blobs are
+150–270 KB and why `drill/` is a state machine rather than CRUD. **Do not deduplicate
+it** — the reports read `summary[0]` as "the baseline of that snapshot".
+
+### The `action` column names the NEXT pending step, not the one just taken
+
+`action.php` decides the label after processing and before inserting:
+
+```php
+$qdata->dayNumber++;                                   // an action always burns a day
+if ($content['day'][$qdata->dayNumber]['evaluateStyle']) {
+    $qdata->action = "SELECT_STYLE";
+} else {
+    $qdata->action = "MORE_ACTIONS";
+    $content['control']['action'] = '';                // cleared on non-style days
+    $content['control']['task']   = '';
+}
+```
+
+Verified against real data: all six rows immediately preceding a `SELECT_STYLE` still
+carry an action name; the 8 rows with a blank `control.action` (steps 3, 8, 9, 18, 19,
+23, 28, 40) and none of them precedes a style pick.
+
+### Set structure (confirmed by the 2023-12 sample)
+
+One drill = `INTRODUCTION` (step 0, day 0) + 7 sets + a terminal row. Each set is
+`SELECT_STYLE` followed by **4 real actions**; the last set may be short (this sample: 1
+action). Extra records can appear *inside* a set without consuming an action slot, so a
+naive count per set reads 5,6,6,5,5,4,2 instead of 4,4,4,4,4,4,1.
+
+### Status ladder
+
+| status | meaning | set by |
+|---:|---|---|
+| 200 | initialised, not started | `init.php:228` |
+| 500 | in progress | `init.php` / carried forward |
+| 600 | **target achieved** — does NOT end the drill | `action.php:784` |
+| 700 | failed: `dayNumber >= numberOfDays` | `action.php:797` |
+| 750 | failed: `noMoreStaff()` | `action.php:800`, `environment.php:190` |
+| 800 | timed out | `timeout.php:15` (`status == 600 ? 900 : 800`) |
+| 900 | completed successfully | `action.php:797/800`, `timeout.php:15`, `environment.php:190` |
+
+A drill ends only on days-exhausted, no-staff-left, or clock expiry. Reaching 600
+(target met) is **not** terminal — the sample hit 600 at step 32 and kept running to
+step 41.
+
+### Terminal labels
+
+`COMPLETED` (when status was 600) / `FAILED` (days or staff exhausted) / `TIME_OUT`.
+
+`timeout.php` behaves differently from `action.php` in two ways that are visible in the
+data and easy to get wrong:
+
+1. It does **not** advance `dayNumber`; it reuses the client's value. The sample's
+   terminal row has `dayNumber = 33`, identical to its predecessor — which is how we
+   know it came from `timeout.php` and not `action.php` (an `action.php` row would be
+   day 34).
+2. It builds the new snapshot from **`$qdata->content` sent by the client**, not from a
+   DB re-read, and it first stamps the *previous* row's `updatedOn = now()` using the
+   incoming `drillDetailId`. The port must reproduce that: the timeout record trusts
+   client-supplied state.
+
+### Writers of `drilldetail`
+
+| file:line | record |
+|---|---|
+| `init.php:312` | `'INTRODUCTION'`, step 0, day 0, status 200 |
+| `action.php:867` | next-step label (`SELECT_STYLE`/`MORE_ACTIONS`), day incremented |
+| `timeout.php:29` | `COMPLETED`/`TIME_OUT`, day NOT incremented |
+| `environment.php:208` | `$qdata->action` as sent; does not clear `control.action` |
+
+`environment.php` is the remaining piece of the model; the non-slot records inside a set
+are currently attributed to it pending confirmation.
