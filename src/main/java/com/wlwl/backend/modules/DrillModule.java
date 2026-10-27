@@ -61,7 +61,9 @@ public class DrillModule implements ModuleHandler {
 
         switch (mod) {
             case "TIMEOUT" -> timeout(ctx, qdata);
-            case "INIT", "ACTION", "ENVIRONMENT", "RESET", "UPDATENAME" -> {
+            case "RESET" -> reset(ctx, qdata);
+            case "UPDATENAME" -> updateName(ctx, qdata);
+            case "INIT", "ACTION", "ENVIRONMENT" -> {
                 // body first: ctx.text() resets the status to 200
                 ctx.text("drill mod " + mod + " is not ported yet");
                 ctx.status(501);
@@ -125,6 +127,42 @@ public class DrillModule implements ModuleHandler {
         }
         PhpRows.set(last, "content", PhpJson.decodeAssoc(mapper, last.get("content")));
         ctx.json(PhpArray.of(last).toJsonNode());
+    }
+
+    /** drill/reset.php (18 lines) — delete a drillControl, relying on FK cascade. */
+    private void reset(RpcContext ctx, JsonNode qdata) throws Exception {
+        String drillControlId = text(qdata, "drillControlId");
+        if (drillControlId.isEmpty() || "0".equals(drillControlId)) {
+            return;                       // PHP: if ($qdata->drillControlId) { ... }
+        }
+        jdbc.update("delete from drillcontrol where drillControlId = ?", drillControlId);
+        List<Map<String, Object>> left = PhpRows.query(jdbc,
+                "select * from drillcontrol where drillControlId = ?", drillControlId);
+        if (!left.isEmpty()) {
+            // The PHP echoes a hand-written string with SINGLE quotes, so the body is not
+            // valid JSON: {'status':'notdone'}. Passed through byte-for-byte on purpose.
+            ctx.rawJson(200, "{'status':'notdone'}");
+        } else {
+            ctx.noContent();
+        }
+    }
+
+    /** drill/updatename.php (23 lines) — rename a user, then return the fresh row. */
+    private void updateName(RpcContext ctx, JsonNode qdata) throws Exception {
+        jdbc.update("update backenduser set userName = ? where userId = ?",
+                text(qdata, "userName"), text(qdata, "userId"));
+        List<Map<String, Object>> rows = PhpRows.query(jdbc,
+                "select * from backenduser where userId = ?", text(qdata, "userId"));
+        if (rows.isEmpty()) {
+            return;                       // PHP emits nothing when the user is gone
+        }
+        if (ctx.queryStringLength() == 0) {
+            PhpArray list = new PhpArray();
+            for (Map<String, Object> row : rows) list.append(PhpArray.of(row));
+            ctx.json(list.toJsonNode());
+        } else {
+            ctx.json(PhpArray.of(rows.get(rows.size() - 1)).toJsonNode());
+        }
     }
 
     private Map<String, Object> lastRow(String drillId) {

@@ -131,4 +131,46 @@ class DrillTimeoutParityTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(""));
     }
+
+    @Test
+    @DisplayName("RESET deletes the drillControl and answers 204 — the body only appears on FAILURE")
+    void resetDeletes() throws Exception {
+        // Read the PHP carefully: it deletes, re-selects, and echoes
+        // {'status':'notdone'} only if the row is STILL THERE. A successful delete falls
+        // into the else branch and returns 204 with no body.
+        mockMvc.perform(put("/backend/drill/").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"restkey\":\"" + KEY + "\",\"method\":\"PUT\","
+                                + "\"mod\":\"RESET\",\"qdata\":{\"drillControlId\":\"DC1\"}}"))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from drillcontrol where drillControlId = 'DC1'", Integer.class))
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("RESET without a drillControlId emits nothing at all")
+    void resetWithoutId() throws Exception {
+        mockMvc.perform(put("/backend/drill/").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"restkey\":\"" + KEY + "\",\"method\":\"PUT\","
+                                + "\"mod\":\"RESET\",\"qdata\":{}}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(""));
+    }
+
+    @Test
+    @DisplayName("UPDATENAME renames the user and returns the fresh row")
+    void updateName() throws Exception {
+        mockMvc.perform(put("/backend/drill/").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"restkey\":\"" + KEY + "\",\"method\":\"PUT\","
+                                + "\"mod\":\"UPDATENAME\",\"qdata\":{\"userName\":\"Renamed\","
+                                + "\"userId\":\"U1\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].username").value("Renamed"));
+
+        assertThat(jdbc.queryForObject(
+                "select userName from backenduser where userId = 'U1'", String.class))
+                .isEqualTo("Renamed");
+    }
 }
