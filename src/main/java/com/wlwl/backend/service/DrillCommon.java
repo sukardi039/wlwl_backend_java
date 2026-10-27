@@ -661,11 +661,11 @@ public final class DrillCommon {
      * The `evaluate` branch is NOT ported: it calls cal_swap(), which belongs to the
      * action.php slice. It throws loudly instead of silently doing nothing.
      */
-    public static void calImpacts(JdbcTemplate jdbc, PhpArray content, int c, String imp,
-                                  double enhance, double skillsForced,
-                                  double moraleForced, double efficiencyForced) {
+    public static Map<String, Object> calImpacts(JdbcTemplate jdbc, PhpArray content, int c, String imp,
+                                                 double enhance, double skillsForced,
+                                                 double moraleForced, double efficiencyForced) {
         PhpArray m = memberAt(content, c);
-        if (m == null) return;                       // PHP would fatal on a missing slot
+        if (m == null) return new LinkedHashMap<>();  // PHP would fatal on a missing slot
 
         Map<String, Object> res = profileRow(jdbc, "impactprofile_view", imp, m);
         Map<String, Object> act = firstRow(jdbc, "select * from action where actionName = ?", imp);
@@ -756,6 +756,8 @@ public final class DrillCommon {
         dbg(content, str(m.get("staffExp")) + "/" + imp,
                 numStr(num(m.get("skillsAdded"))) + ", " + numStr(num(m.get("moraleAdded")))
                         + ", " + numStr(num(m.get("efficiencyAdded"))));
+        // the PHP's &$res out-parameter: action.php reuses it as $prf for every member
+        return res;
     }
 
     /**

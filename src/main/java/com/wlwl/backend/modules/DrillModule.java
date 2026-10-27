@@ -9,6 +9,7 @@ import com.wlwl.backend.db.PhpUniqid;
 import com.wlwl.backend.rpc.ModuleHandler;
 import com.wlwl.backend.rpc.RpcContext;
 import com.wlwl.backend.service.Competency;
+import com.wlwl.backend.service.DrillAction;
 import com.wlwl.backend.service.DrillEnvironment;
 import com.wlwl.backend.service.DrillInit;
 import com.wlwl.backend.service.DrillPost;
@@ -75,11 +76,7 @@ public class DrillModule implements ModuleHandler {
             case "RESET" -> reset(ctx, qdata);
             case "UPDATENAME" -> updateName(ctx, qdata);
             case "ENVIRONMENT" -> DrillEnvironment.run(jdbc, mapper, ctx);
-            case "ACTION" -> {
-                // body first: ctx.text() resets the status to 200
-                ctx.text("drill mod " + mod + " is not ported yet");
-                ctx.status(501);
-            }
+            case "ACTION" -> DrillAction.run(jdbc, mapper, ctx);
             default -> ctx.text("No Mod");
         }
     }

@@ -355,7 +355,9 @@ insert into bossreview (reviewName, action, applyAll, impactAppFrom, impactAppTo
                         bossMsg) values
   ('allGood',   'SELECT_STYLE',  0,  100, 100,   0,  0,   0, 100,   0, 100, 1, 1, 'Nice pick'),
   ('allGood2',  'SELECT_STYLE',  0,    0, 100,   0, 100, 0, 100,   0, 100, 1, 0, 'Boss shrugs'),
-  ('mixedMgmt', 'MORE_ACTIONS',  1,    0, 100,   0, 100, 0, 100,   0, 100, 2, 0, 'Keep going');
+  ('mixedMgmt', 'MORE_ACTIONS',  1,    0, 100,   0, 100, 0, 100,   0, 100, 2, 0, 'Keep going'),
+  -- SELECT_STYLE with no action row behind the style name: managementAction coerces to 0
+  ('styleMgmt0','SELECT_STYLE',  0,  100, 100,   0,   0, 0, 100,   0, 100, 0, 1, 'Style locked in');
 
 create table bossmessage (
   messageCode varchar(100) not null primary key,

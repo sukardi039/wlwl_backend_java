@@ -109,9 +109,13 @@ public final class BossReview {
                         + "and affectAppFrom <= ? and affectAppTo >= ? "
                         + "and affectRejFrom <= ? and affectRejTo >= ? "
                         + "and managementAction = ?",
-                qAction, applyAll, impactApprove, impactApprove, impactReject, impactReject,
+                // applyAll/managementAction are INT columns. The PHP splices them as quoted
+                // strings, so MySQL casts '' to 0 — bind the number instead of "" or H2
+                // refuses the comparison outright.
+                qAction, (long) num(applyAll),
+                impactApprove, impactApprove, impactReject, impactReject,
                 affectApprove, affectApprove, affectReject, affectReject,
-                str(rowGet(action, "managementAction")));
+                (long) num(rowGet(action, "managementAction")));
         if (rows.isEmpty()) return;
 
         Map<String, Object> row = rows.get(0);

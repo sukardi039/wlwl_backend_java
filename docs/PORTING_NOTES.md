@@ -893,7 +893,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/commonLib.php` | 775 | **complete — 22 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
-| `drill/action.php` | 891 | **not ported** — returns 501 |
+| `drill/action.php` | 891 | **PARTIAL** — SELECT_STYLE ported + tested; other branches answer 501 |
 | `drill/bossreview.php` | 108 | **ported + tested** (`BossReviewTest`, 4 cases) |
 | `drill/post.php` | 60 | **ported + tested** (`DrillPostParityTest`, 6 cases) — POST verb, query string = userId |
 
@@ -1180,3 +1180,45 @@ into the step's `summary[].bossRev`.
 
 The test fixture gained a `bossreview` table (three rows covering unanimous / mixed /
 management-specific cases).
+
+## 28. drill/action.php — the shape of the file (SELECT_STYLE ported)
+
+Three parts, only the middle one differs per move:
+
+1. **Preamble** — rewrite the client's row (`update drilldetail set content=...`), load the
+   product's task weights (only the PHP's dead `if (false)` block reads them), read
+   params_int, `json_decode` the content, look up `action` by `content.control.action`,
+   `initMemberValues`, clear `touched` on every slot.
+2. **`switch ($qdata->action)`** — SELECT_STYLE (ported), MORE_ACTIONS, recruit/sack/swap/
+   evaluate (not yet; they answer 501 with the branch name).
+3. **Shared tail** — `weekSummary`, `writeSummary`, clear `actioned`/`actionExp`, mint the
+   next `drillDetailId`, `stepNumber++`, `dayNumber++`, `welcome=0`, choose the NEXT action
+   from `day[newDay].evaluateStyle`, run the status ladder (600 celebrate / 700 out of days
+   / 750 no staff / 900 completed), assign staff to the new day's unclaimed events, then
+   update the drill, insert the row and answer.
+
+**28.1 `$prf` is cal_impacts' by-reference `&$res`.** SELECT_STYLE passes `$prf` into
+`cal_impacts` for every member and reads `$prf['desiredStyle']` / `$prf['impactClass']`
+afterwards — so the style scoring and the boss review are driven by the LAST member's
+profile row, not by the action. `DrillCommon.calImpacts` therefore RETURNS the profile row;
+do not turn that back into void.
+
+**28.2 The tail advances the day UNCONDITIONALLY** (`$qdata->dayNumber++`), and the next
+action is then chosen by the new day: `evaluateStyle` -> SELECT_STYLE, else MORE_ACTIONS with
+`control.action`/`control.task` cleared. `daysNeeded` is 0 for SELECT_STYLE, so the
+`numberOfDays` adjustment does nothing here (it matters for moves that consume extra days).
+
+**28.3 `writeSummary` runs BEFORE the tail changes `control.action`**, so the summary's
+`phase` is the move just played (SELECT_STYLE), not the next one.
+
+**28.4 The environment staff assignment only runs on the non-terminal path.** For each
+unclaimed event of the new day it picks a member via `applyAll`/`randomOne`/`lowMorale`/
+`lowEfficiency`/`highEfficiency`; a `resignCheck` event with a nominated member is first
+given a chance to be called off when their morale beats the recorded criteria (or is 100).
+
+**28.5 Integer columns bound from PHP strings.** `bossreview.applyAll`/`managementAction`
+are INT columns and the PHP splices them as quoted strings, so MySQL casts `''` to 0. Binding
+`""` makes H2 fail the comparison outright — bind the number (0 for an absent value).
+
+**28.6 Same gzip divergence as environment.php:** the PHP answers `text/javascript` +
+`Content-Encoding: gzip`; the port answers plain JSON.
