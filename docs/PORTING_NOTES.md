@@ -805,3 +805,43 @@ data and easy to get wrong:
 
 `environment.php` is the remaining piece of the model; the non-slot records inside a set
 are currently attributed to it pending confirmation.
+
+## 19. drill/ endpoints are INDEPENDENT — no ordering between them
+
+Confirmed by the product owner: `init`, `SELECT_STYLE`, action, `environment` and
+`timeout` have **no sequence relationship**. Each is a separate entry point that handles
+the record in hand; the dataset (`drilldetail`) is simply the collection of all records
+that arrived. Nothing in the backend requires them to be replayed in order, so each can
+be ported and tested on its own. `drill/index.php` is just
+`include("../etc/restdx.inc")`, so `drill` is a normal **authed** module on the standard
+verb dispatch — there is no custom router.
+
+### `drill/timeout.php` contract (29 lines, but not standalone)
+
+It calls `saveCompetency()` from `competency.php` (173 lines), which writes the
+`competency` **table** — so those two must be ported together. Sequence:
+
+1. Read the last row: `select * from drilldetail where drillId=? order by stepNumber desc limit 1`.
+2. **Guard:** if that row's `action` is already `TIME_OUT`/`COMPLETED`/`FAILED`, skip the
+   write entirely — but still fall through to step 11, so a repeated call returns the
+   existing terminal row with **200**, not 204. (Note: if there is no row at all,
+   `$row['action']` is null, all three comparisons are true, and the write path runs.)
+3. `update drilldetail set updatedOn = now() where drillDetailId = <qdata->drillDetailId>`
+   — marks the row the *client* was sitting on, which need not be the row read in step 1.
+4. Decode `$qdata->content` (client-supplied state — see §18).
+5. `drillDetailId = uniqid()`, **`stepNumber++` from the client's value, never from the DB**.
+6. `stat = (control.status == 600) ? 900 : 800`.
+7. `action = (control.status == 600) ? "COMPLETED" : "TIME_OUT"`.
+8. `update drill set drillStatus = stat [, endOn = now()] where drillId = ?` (`endOn` only
+   when `stat > 600`).
+9. `update drillcontrol set completedDrill = (select seq from drill where drillId = ?)
+   where drillControlId = (select drillControlId from drill where drillId = ?)` — runs
+   when `stat > 500`, so effectively always here.
+10. `content.control.status = stat`; `saveCompetency(...)`; INSERT the new snapshot with
+    `json_encode($content, JSON_UNESCAPED_UNICODE)`.
+11. Re-read the last row, `json_decode` its content, **200** with the row as an object;
+    **204** only if no row exists.
+
+Quirks to preserve: the step number comes from the client; the guard is based on the
+last row while the `updatedOn` stamp uses the client's id; and unlike `action.php` /
+`environment.php`, this endpoint does **not** add a `timeNow` field to the response.
