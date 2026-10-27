@@ -963,19 +963,23 @@ doubles so `round()` output matches, `phpDivide()` returns an int when evenly di
 It does NOT reproduce the copied half: those values go through `PhpRows`, which maps
 integer columns to JSON numbers.
 
-**22.4 OPEN RULING — `PhpRows` vs production on integer columns.** Production mysqli
+**22.4 RULED (2026-10-27) — numeric strings are not a parity target.** Production mysqli
 returns numeric columns as STRINGS (the notes already rely on this in §11.1, where
-`'2' !== 2` is always true). `PhpRows` maps `int`/`bigint` columns to JSON numbers, so all
-30 ported modules emit a type that production does not. Evidence is unambiguous — in the
-2026-08 blob `day.8.newOrders` is `1` (computed) while `day.1.newOrders` is `"3"` (copied)
-— but flipping `PhpRows.value()` to strings changes every module's output and every
-module's test expectations, so it needs the product owner's ruling, not a silent edit.
-Recorded as **R5** in `../wlwl_parity_ledger.md`. `DrillInit` is written on `PhpRows`, so
-if the ruling is "strings everywhere" the fix is one method plus test updates — no INIT
-logic changes.
+`'2' !== 2` is always true), and `PhpRows` maps `int`/`bigint` to JSON numbers, so the
+port's JSON carries numbers where production carries `"3"`. The owner's ruling: PHP casts
+automatically — `"1"` is usable as `1`, and adding a string yields a string — so the two
+forms are interchangeable in this stack and the difference is not worth modelling. The
+port keeps `PhpRows` (numbers) as its canonical form; do NOT add string coercion to match
+the blobs. Ledger **R5**, ruled.
 
-`1In4` is the same story: the dump declares `action.1In4` as `int`, both real blobs store
-`"1"` as a string in `analysis.*.oneInFour`. Do not "fix" either side until R5 is ruled.
+Scope of the ruling — it is about the WIRE TYPE only. PHP's *strict* comparisons still
+have to be reproduced where the PHP relies on them, and the port already does:
+`model/` §11.1 (`'2' !== 2` is always true, so `staffs` is always rebuilt) and
+`DrillCommon.isStrictlyZero` (`$readMsg !== 0` lets the string `"0"` through). Those are
+behaviour, not formatting — they stay as they are.
+
+`1In4` is the same story and is therefore also closed: the dump declares `action.1In4` as
+`int` while both real blobs store `"1"`; the port emits the number.
 
 Other INIT facts worth knowing:
 
