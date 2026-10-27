@@ -102,6 +102,25 @@ class BackendGatewayParityTest {
     }
 
     @Test
+    @DisplayName("DROPPED modules return 404 — this test is the ruling, not an oversight")
+    void droppedModulesAre404() throws Exception {
+        // signin/ and messages/ are in scope=OUT by explicit ruling. The PHP would fatal
+        // into a 500 (missing tables wxuser/studentlist/tasks, smshead_view/smslist_view/
+        // StudentList); the port answers 404 because no handler exists.
+        //
+        // READ THIS BEFORE "FIXING" IT: if someone routes the frontend's orphan
+        // src/views/Message.vue, requests will start arriving here and this test will
+        // still pass — a 404 is the correct answer for an unported module. The signal
+        // that something is wrong is the client-side failure, not a server error.
+        for (String dropped : new String[]{"signin", "messages"}) {
+            mockMvc.perform(post("/backend/" + dropped + "/")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(MOD_STYLES))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
     @DisplayName("verb in the JSON body overrides the HTTP verb")
     void bodyVerbOverridesHttpVerb() throws Exception {
         // Sent as HTTP GET, but the envelope says POST -> the POST branch runs.

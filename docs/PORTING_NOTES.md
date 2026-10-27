@@ -602,3 +602,29 @@ Related, recorded while verifying: the frontend calls five endpoints that have *
 backend directory (`idx_baseinfo`, `idx_baseclass`, `idx_staff`, `idx_profileclass`,
 `student` — 15 call sites). Those 404 in PHP production today too, so the gateway's 404
 is faithful; they are missing features upstream, not porting gaps.
+
+## 17. messages/ is dropped, with the risk accepted and written down
+
+`messages/` (3 files, 51 LOC) is **out of scope by explicit user ruling**. It needs
+`smshead_view`, `smslist_view` and `StudentList`, none of which exist in the dump; it
+also has a `switch` with no `default` branch (so an unknown `mod` leaves `$sql` undefined
+and the request dies), and it splices `$data->classes` raw into `in (...)`.
+
+**This drop is riskier than `signin`'s, and the difference matters:** the frontend still
+contains a caller. `src/views/Message.vue:65` fetches `/backend/messages/` with the full
+envelope (`restkey`, `mod: 'head'|'list'`, `classes`, `limit`, `qdata.SMSNumber`). The
+view is unreachable today — it is absent from `src/router/index.js` and imported nowhere
+— but one router line revives it, and every call then hits a **404** here (the PHP would
+500 on the missing views). Because the failure is a 404 rather than a 500, it will be
+quiet on the server side and visible only as a broken screen.
+
+Mitigations, in order of usefulness:
+
+1. `BackendGatewayParityTest.droppedModulesAre404` asserts 404 for **both** dropped
+   modules. It is the ruling encoded as a test, and its comment tells the next developer
+   not to "fix" the 404 into a stub.
+2. The ledger's **risk register (R1–R4)** records the failure mode, the false-assumption
+   trap (the PHP directory still exists), the possibility that the SMS schema lives in a
+   different database, and the fact that no data is at stake (the module is read-only).
+3. No placeholder, stub or empty handler exists in the Java tree — deliberately. A stub
+   returning 200 would conceal the gap instead of exposing it.
