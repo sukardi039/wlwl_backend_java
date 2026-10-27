@@ -113,6 +113,29 @@ public final class PhpJson {
 
     // --------------------------------------------------------- numeric rules
 
+    // ------------------------------------------------------- PHP arithmetic
+
+    /** PHP round(): half away from zero. */
+    public static double round(double v) {
+        return v < 0 ? -Math.floor(-v + 0.5) : Math.floor(v + 0.5);
+    }
+
+    /**
+     * json_encode() of a PHP number as this deployment emits it: an integral double is
+     * written without a fractional part ("2", not "2.0"), a fractional one keeps it.
+     * Both real drill blobs confirm it (`manpower.pos` is 2, `week.orderTarget` is 120).
+     */
+    public static Object jsonNumber(double v) {
+        if (v == Math.rint(v) && !Double.isInfinite(v) && Math.abs(v) < 9.0e15) return (long) v;
+        return v;
+    }
+
+    /** PHP `/`: an int result when the division is exact, a float otherwise. */
+    public static Object divide(long a, long b) {
+        if (b != 0 && a % b == 0) return a / b;
+        return jsonNumber((double) a / b);
+    }
+
     /** PHP int stays int; anything else is a double. */
     public static boolean isIntegral(Object v) {
         return v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte;

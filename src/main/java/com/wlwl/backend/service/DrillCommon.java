@@ -255,9 +255,416 @@ public final class DrillCommon {
         return !s.isEmpty() && !"0".equals(s);
     }
 
+    /**
+     * PHP `$member['staffName'] > 0`. staffName holds a staffId, but on PHP 7+ a non-numeric
+     * string compares as a string greater than "0", so the faithful reading is "has a name".
+     * Shared with writeSummary's loop guard; `named()` does the same for a members array.
+     */
+    private static boolean hasName(Object staffName) {
+        if (staffName == null) return false;
+        String s = staffName.toString();
+        return !s.isEmpty() && !"0".equals(s);
+    }
+
     private static PhpArray member(PhpArray members, int c) {
         Object v = members.get(c);
         return v instanceof PhpArray a ? a : null;
+    }
+
+
+    // ------------------------------------------------ impact / affect maths
+
+    /**
+     * cal_impacts(): apply an impact (an action name OR an environment name) to one member.
+     *
+     * The PHP signature carries `$eff` and `&$res`; `$eff` is only read inside `if (false)`
+     * (dead task-based evaluation) and the one caller that matters — environment.php —
+     * passes an undefined `$dummy` for `$res`, so neither is reproduced here.
+     *
+     * The `evaluate` branch is NOT ported: it calls cal_swap(), which belongs to the
+     * action.php slice. It throws loudly instead of silently doing nothing.
+     */
+    public static void calImpacts(JdbcTemplate jdbc, PhpArray content, int c, String imp,
+                                  double enhance, double skillsForced,
+                                  double moraleForced, double efficiencyForced) {
+        PhpArray m = memberAt(content, c);
+        if (m == null) return;                       // PHP would fatal on a missing slot
+
+        Map<String, Object> res = profileRow(jdbc, "impactprofile_view", imp, m);
+        Map<String, Object> act = firstRow(jdbc, "select * from action where actionName = ?", imp);
+        String parentAction = act == null ? null : str(rowGet(act, "parentAction"));
+
+        if ("evaluate".equals(parentAction)) {
+            throw new IllegalStateException("cal_impacts(): the evaluate branch needs "
+                    + "cal_swap(), which is not ported yet (action.php slice)");
+        }
+
+        // PHP: else if ($act['evaluated'] != 1 || member.evaluated != 1 || (evaluated == 1 && evaluatedFor != task))
+        if (num(act == null ? null : rowGet(act, "evaluated")) != 1
+                || num(m.get("evaluated")) != 1
+                || (num(m.get("evaluated")) == 1 && !eq(m.get("evaluatedFor"), m.get("task")))) {
+
+            m.put("touched", 1L);
+
+            double skillsOld = num(m.get("skillsValue"));
+            double moraleOld = num(m.get("moraleValue"));
+            double efficiencyOld = num(m.get("efficiencyValue"));
+
+            double skillsAdd = round(num(rowGet(res, "skillsImpact")) * num(rowGet(res, "skillsSensitivity")) * enhance
+                    + skillsForced * num(rowGet(res, "skillsSensitivity")));
+            double skillsValue = clamp(skillsOld + skillsAdd, 0, 100);
+            skillsAdd = skillsValue - skillsOld;
+
+            double moraleAdd = round(num(rowGet(res, "moraleImpact")) * num(rowGet(res, "moraleSensitivity")) * enhance
+                    + moraleForced * num(rowGet(res, "moraleSensitivity")));
+            double moraleValue = clamp(moraleOld + moraleAdd, 0, 100);
+            moraleAdd = moraleValue - moraleOld;
+
+            // morale already full and nothing else moved: nudge skills so the action still shows
+            if (moraleOld == moraleValue && moraleOld == 100 && skillsAdd == 0) {
+                dbg(content, "100% before", numStr(skillsAdd) + ", " + numStr(skillsValue));
+                skillsAdd = skillsOld > 50 ? 1 : 2;
+                skillsValue = clamp(skillsOld + skillsAdd, 0, 100);
+                skillsAdd = skillsValue - skillsOld;
+                dbg(content, "100% after", numStr(skillsAdd) + ", " + numStr(skillsValue));
+            }
+
+            Map<String, Object> seff = skillseffect(jdbc, moraleValue);
+
+            double efficiencyAdd;
+            if (skillsAdd != 0) {
+                efficiencyAdd = round(skillsAdd * num(rowGet(seff, "skillsEffect"))
+                        * num(rowGet(res, "efficiencySensitivity")) * Math.abs(enhance)
+                        + (num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                        * num(rowGet(res, "efficiencySensitivity")));
+            } else if (moraleAdd != 0) {
+                dbg(content, str(m.get("staffExp")), "skillsValue:" + numStr(skillsValue)
+                        + ", moralAdd:" + numStr(moraleAdd) + ", moraleOld:" + numStr(moraleOld));
+                efficiencyAdd = round(skillsValue * (moraleOld == 0 ? 0 : moraleAdd / moraleOld)
+                        * Math.abs(enhance)
+                        + (num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                        * num(rowGet(res, "efficiencySensitivity")));
+            } else {
+                efficiencyAdd = round((num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                        * num(rowGet(res, "efficiencySensitivity")));
+            }
+
+            double efficiencyValue = clamp(efficiencyOld + efficiencyAdd, 0, 120);   // cap 120%
+            efficiencyAdd = efficiencyValue - efficiencyOld;
+
+            m.put("skillsValue", jsonNumber(skillsValue));
+            m.put("skillsAdded", jsonNumber(num(m.get("skillsAdded")) + skillsAdd));
+            m.put("moraleValue", jsonNumber(moraleValue));
+            m.put("moraleAdded", jsonNumber(num(m.get("moraleAdded")) + moraleAdd));
+            m.put("efficiencyValue", jsonNumber(efficiencyValue));
+            m.put("efficiencyAdded", jsonNumber(num(m.get("efficiencyAdded")) + efficiencyAdd));
+            m.put("added", jsonNumber(num(m.get("added")) + skillsAdd + moraleAdd + efficiencyAdd));
+            m.put("addedAvg", jsonNumber(round(num(m.get("added")) / 3)));
+
+            if (!str(rowGet(res, "impactMsg")).isEmpty()) {
+                long mc = (long) num(m.get("msgCount")) + 1;
+                m.put("msgCount", mc);
+                m.child("message").put(mc, rowGet(res, "impactMsg"));
+                m.put("readMsg", 0L);
+            }
+        }
+
+        if ("swap-task".equals(parentAction)) {
+            m.put("evalResult", "");
+            m.put("evaluated", 0L);
+            m.put("evaluatedFor", "");
+        }
+        // PHP max($member['maxMorale'], moraleValue): a missing key reads as 0
+        m.put("maxMorale", jsonNumber(Math.max(num(m.get("maxMorale")), num(m.get("moraleValue")))));
+        dbg(content, str(m.get("staffExp")) + "/" + imp,
+                numStr(num(m.get("skillsAdded"))) + ", " + numStr(num(m.get("moraleAdded")))
+                        + ", " + numStr(num(m.get("efficiencyAdded"))));
+    }
+
+    /**
+     * cal_affect(): the knock-on effect of somebody ELSE's action, applied to a bystander.
+     *
+     * Same shape as cal_impacts but three differences that matter: no `enhance` factor and
+     * no abs(), the message column is `affectMsg`, and a net loss burns a mark into
+     * `actEffect[<imp>]`. environment.php passes only 8 arguments, so the PHP's
+     * `$day_number` is null there and `null + 2` is 2.
+     */
+    public static void calAffect(JdbcTemplate jdbc, PhpArray content, int c, String imp,
+                                 double skillsForced, double moraleForced, double efficiencyForced) {
+        PhpArray m = memberAt(content, c);
+        if (m == null) return;
+
+        Map<String, Object> res = profileRow(jdbc, "impactprofile_view", imp, m);
+
+        double skillsOld = num(m.get("skillsValue"));
+        double moraleOld = num(m.get("moraleValue"));
+        double efficiencyOld = num(m.get("efficiencyValue"));
+
+        double skillsAdd = round(num(rowGet(res, "skillsAffect")) * num(rowGet(res, "skillsSensitivity"))
+                + skillsForced * num(rowGet(res, "skillsSensitivity")));
+        double skillsValue = clamp(skillsOld + skillsAdd, 0, 100);
+        skillsAdd = skillsValue - skillsOld;
+
+        double moraleAdd = round(num(rowGet(res, "moraleAffect")) * num(rowGet(res, "moraleSensitivity"))
+                + moraleForced * num(rowGet(res, "moraleSensitivity")));
+        double moraleValue = clamp(moraleOld + moraleAdd, 0, 100);
+        moraleAdd = moraleValue - moraleOld;
+
+        Map<String, Object> seff = skillseffect(jdbc, moraleValue);
+
+        double efficiencyAdd;
+        if (skillsAdd != 0) {
+            efficiencyAdd = round(skillsAdd * num(rowGet(seff, "skillsEffect"))
+                    * num(rowGet(res, "efficiencySensitivity"))
+                    + (num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                    * num(rowGet(res, "efficiencySensitivity")));
+        } else if (moraleAdd != 0) {
+            dbg(content, str(m.get("staffExp")), "skillsValue:" + numStr(skillsValue)
+                    + ", moralAdd:" + numStr(moraleAdd) + ", moraleOld:" + numStr(moraleOld));
+            efficiencyAdd = round(skillsValue * (moraleOld == 0 ? 0 : moraleAdd / moraleOld)
+                    + (num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                    * num(rowGet(res, "efficiencySensitivity")));
+        } else {
+            efficiencyAdd = round((num(rowGet(res, "efficiencyImpact")) + efficiencyForced)
+                    * num(rowGet(res, "efficiencySensitivity")));
+        }
+
+        double efficiencyValue = clamp(efficiencyOld + efficiencyAdd, 0, 120);
+        efficiencyAdd = efficiencyValue - efficiencyOld;
+
+        m.put("skillsValue", jsonNumber(skillsValue));
+        m.put("skillsAdded", jsonNumber(num(m.get("skillsAdded")) + skillsAdd));
+        m.put("moraleValue", jsonNumber(moraleValue));
+        m.put("moraleAdded", jsonNumber(num(m.get("moraleAdded")) + moraleAdd));
+        m.put("efficiencyValue", jsonNumber(efficiencyValue));
+        m.put("efficiencyAdded", jsonNumber(num(m.get("efficiencyAdded")) + efficiencyAdd));
+        m.put("added", jsonNumber(num(m.get("added")) + skillsAdd + moraleAdd + efficiencyAdd));
+        m.put("addedAvg", jsonNumber(round(num(m.get("added")) / 3)));
+
+        if (!str(rowGet(res, "affectMsg")).isEmpty()) {
+            long mc = (long) num(m.get("msgCount")) + 1;
+            m.put("msgCount", mc);
+            m.child("message").put(mc, rowGet(res, "affectMsg"));
+            m.put("readMsg", 0L);
+        }
+        m.put("maxMorale", jsonNumber(Math.max(num(m.get("maxMorale")), num(m.get("moraleValue")))));
+        if (num(m.get("added")) < 0) m.child("actEffect").put(imp, 2L);   // null + 2
+        if (num(m.get("addedAvg")) != 0) m.put("touched", 1L);
+    }
+
+    /**
+     * writeSummary(): append the step's per-member and team snapshot to content.summary.
+     *
+     * Load-bearing oddities, all preserved:
+     *  - `$curm = currentMembers($cont);` is immediately overwritten by maxMembers, so every
+     *    average divides by the TEMPLATE's headcount, not the live one.
+     *  - the trend block sits OUTSIDE the `if staffName` guard, so empty slots also get a
+     *    trend update — using whatever `$stotal` the last named member left behind.
+     *  - `$stotal` comes from summary[cs-1][member][name].total; at cs = 0 that is null -> 0.
+     *  - `+=` on missing keys reads as 0 (PHP notice, not an error).
+     */
+    public static void writeSummary(PhpArray cont, String action, Object stepNumber, Object dayNumber) {
+        PhpArray summary = cont.child("summary");
+        long cs = summary.size();
+        long maxMembers = (long) num(PhpJson.path(cont, "control", "maxMembers"));
+        PhpArray members = cont.get("members") instanceof PhpArray ma ? ma : new PhpArray();
+
+        double stot = 0, mtot = 0, etot = 0, satot = 0, matot = 0, eatot = 0;
+        double ototal = num(PhpJson.path(cont, "current", "teamAvg", "total"));
+        double ttotal = ototal;
+
+        PhpArray entry = summary.child(cs);
+        double stotal = 0;                       // survives the loop, like the PHP's
+
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = memberAt(cont, (int) c);
+            if (m != null && hasName(m.get("staffName"))) {
+                Object name = m.get("staffName");
+                stotal = num(PhpJson.path(summary, cs - 1, "member", name, "total"));
+
+                // inside the staffName guard in the PHP too: a team with nobody named never
+                // gets step/day/phase, only the team blocks written after the loop
+                entry.put("step", stepNumber);
+                entry.put("day", dayNumber);
+                entry.put("phase", action);
+
+                PhpArray sm = entry.child("member").child(name);
+                sm.put("staff", m.get("staffExp"));
+                sm.put("skills", m.get("skillsValue"));
+                sm.put("morale", m.get("moraleValue"));
+                sm.put("efficiency", m.get("efficiencyValue"));
+                sm.put("total", jsonNumber(round((num(m.get("skillsValue"))
+                        + num(m.get("moraleValue")) + num(m.get("efficiencyValue"))) / 3)));
+                sm.put("skillsAdd", jsonNumber(num(sm.get("skillsAdd")) + num(m.get("skillsAdded"))));
+                sm.put("moraleAdd", jsonNumber(num(sm.get("moraleAdd")) + num(m.get("moraleAdded"))));
+                sm.put("efficiencyAdd", jsonNumber(num(sm.get("efficiencyAdd")) + num(m.get("efficiencyAdded"))));
+                sm.put("totalAdd", jsonNumber(num(sm.get("total")) - stotal));
+                boolean actionPhase = isActionPhase(action);
+                sm.put("action", actionPhase ? m.get("actionExp") : m.get("styleExp"));
+                sm.put("message", implode(" / ", m.get("message")));
+
+                stot += num(m.get("skillsValue"));
+                mtot += num(m.get("moraleValue"));
+                etot += num(m.get("efficiencyValue"));
+                satot += num(m.get("skillsAdded"));
+                matot += num(m.get("moraleAdded"));
+                eatot += num(m.get("efficiencyAdded"));
+            }
+
+            if (m == null) {
+                // PHP auto-vivifies: $cont['members'][$c]['trendLast'] = ... creates the slot
+                m = members.child(c);
+            }
+            {
+                boolean hadTrendLast = m.containsKey("trendLast");
+                Object trendLast = m.get("trendLast");
+                m.put("trendLast", hadTrendLast ? m.get("trend") : jsonNumber(stotal));
+                double curTotal = num(PhpJson.path(summary, cs, "member", m.get("staffName"), "total"));
+                m.put("trend", jsonNumber(num(m.get("trend")) + curTotal - stotal));
+                dbg(cont, str(m.get("staffExp")) + "/trend",
+                        str(trendLast) + ":" + numStr(num(m.get("trend"))));
+            }
+        }
+
+        double tot = stot + mtot + etot;
+        double atot = satot + matot + eatot;
+
+        PhpArray team = entry.child("team");
+        team.put("skills", jsonNumber(stot));
+        team.put("morale", jsonNumber(mtot));
+        team.put("efficiency", jsonNumber(etot));
+        team.put("total", jsonNumber(tot));
+        team.put("skillsAdd", jsonNumber(satot));
+        team.put("moraleAdd", jsonNumber(matot));
+        team.put("efficiencyAdd", jsonNumber(eatot));
+        team.put("totalAdd", jsonNumber(atot));
+
+        PhpArray avg = entry.child("teamAvg");
+        avg.put("skills", jsonNumber(round(stot / maxMembers)));
+        avg.put("morale", jsonNumber(round(mtot / maxMembers)));
+        avg.put("efficiency", jsonNumber(round(etot / maxMembers)));
+        avg.put("total", jsonNumber(round(tot / maxMembers / 3)));
+        avg.put("skillsAdd", jsonNumber(round(satot / maxMembers)));
+        avg.put("moraleAdd", jsonNumber(round(matot / maxMembers)));
+        avg.put("efficiencyAdd", jsonNumber(round(eatot / maxMembers)));
+        avg.put("totalAdd", jsonNumber(num(avg.get("total")) - ttotal));
+
+        team.put("action", isActionPhase(action) ? PhpJson.path(cont, "control", "actionExp") : "");
+        entry.put("orderDone", PhpJson.path(cont, "orderStatus", "ordersCompleted"));
+
+        PhpArray current = cont.child("current");
+        current.child("team").put("skills", jsonNumber(stot));
+        current.child("team").put("morale", jsonNumber(mtot));
+        current.child("team").put("efficiency", jsonNumber(etot));
+        current.child("team").put("total", jsonNumber(tot));
+        current.child("teamAvg").put("skills", jsonNumber(round(stot / maxMembers)));
+        current.child("teamAvg").put("morale", jsonNumber(round(mtot / maxMembers)));
+        current.child("teamAvg").put("efficiency", jsonNumber(round(etot / maxMembers)));
+        current.child("teamAvg").put("total", jsonNumber(round(tot / maxMembers / 3)));
+        current.child("teamAvg").put("totalAdd",
+                jsonNumber(num(PhpJson.path(current, "teamAvg", "total")) - ototal));
+
+        if ("MORE_ACTIONS".equals(action)) {
+            PhpArray a = cont.child("analysis").child("action")
+                    .child(PhpJson.path(cont, "control", "action"));
+            a.put("skillsAdded", jsonNumber(num(a.get("skillsAdded"))
+                    + num(PhpJson.path(summary, summary.size() - 1, "teamAvg", "skillsAdd"))));
+            a.put("moraleAdded", jsonNumber(num(a.get("moraleAdded"))
+                    + num(PhpJson.path(summary, summary.size() - 1, "teamAvg", "moraleAdd"))));
+        }
+
+        long bossMsgCount = (long) num(PhpJson.path(cont, "bossMsg", "count"));
+        for (long b = 0; b < bossMsgCount; b++) {
+            entry.child("bossMsg").append(PhpJson.path(cont, "bossMsg", "description", b));
+        }
+        long bossRevCount = (long) num(PhpJson.path(cont, "bossRev", "count"));
+        for (long b = 0; b < bossRevCount; b++) {
+            Object desc = PhpJson.path(cont, "bossRev", "description", b);
+            if (desc != null && !desc.toString().isEmpty()) entry.child("bossRev").append(desc);
+        }
+    }
+
+    private static boolean isActionPhase(String action) {
+        return "MORE_ACTIONS".equals(action) || "ENVIRONMENT".equals(action);
+    }
+
+    // ------------------------------------------------ impact/affect support
+
+    /**
+     * Column read for rows coming from a JDBC query. MUST go through PhpRows.get: MySQL
+     * reports `skillsImpact`, H2 lowercases it to `skillsimpact`, and a bare Map.get()
+     * silently yields null — i.e. every impact factors to 0, in tests only.
+     */
+    private static Object rowGet(Map<String, Object> row, String column) {
+        return row == null ? null : PhpRows.get(row, column);
+    }
+
+    private static Map<String, Object> profileRow(JdbcTemplate jdbc, String view, String imp, PhpArray m) {
+        double skills = num(m.get("skillsValue"));
+        double morale = num(m.get("moraleValue"));
+        double efficiency = num(m.get("efficiencyValue"));
+        Map<String, Object> row = firstRow(jdbc, "select * from " + view + " where impactClass = ?"
+                        + " and skillsMin <= ? and skillsMax >= ?"
+                        + " and moraleMin <= ? and moraleMax >= ?"
+                        + " and efficiencyMin <= ? and efficiencyMax >= ?",
+                imp, skills, skills, morale, morale, efficiency, efficiency);
+        return row == null ? new LinkedHashMap<>() : row;      // PHP: false -> $res['x'] is null
+    }
+
+    private static Map<String, Object> skillseffect(JdbcTemplate jdbc, double moraleValue) {
+        Map<String, Object> row = firstRow(jdbc,
+                "select * from skillseffect where minMorale <= ? and maxMorale >= ?",
+                moraleValue, moraleValue);
+        return row == null ? new LinkedHashMap<>() : row;
+    }
+
+    private static Map<String, Object> firstRow(JdbcTemplate jdbc, String sql, Object... args) {
+        List<Map<String, Object>> rows = PhpRows.query(jdbc, sql, args);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private static PhpArray memberAt(PhpArray content, int c) {
+        Object v = PhpJson.path(content, "members");
+        return v instanceof PhpArray members && members.get((long) c) instanceof PhpArray m ? m : null;
+    }
+
+    private static double clamp(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    private static String numStr(double v) {
+        return jsonNumber(v).toString();
+    }
+
+    /** PHP implode(' / ', $array) — a missing array is the empty string. */
+    private static String implode(String glue, Object v) {
+        StringBuilder sb = new StringBuilder();
+        if (v instanceof PhpArray a) {
+            for (Object o : a.values()) { if (sb.length() > 0) sb.append(glue); sb.append(o == null ? "" : o); }
+        } else if (v instanceof List<?> l) {
+            for (Object o : l) { if (sb.length() > 0) sb.append(glue); sb.append(o == null ? "" : o); }
+        }
+        return sb.toString();
+    }
+
+    private static boolean eq(Object a, Object b) {
+        return a == null ? b == null : a.toString().equals(b == null ? null : b.toString());
+    }
+
+    private static String str(Object v) {
+        return v == null ? "" : v.toString();
+    }
+
+    private static double num(Object v) {
+        return PhpJson.num(v);
+    }
+
+    private static double round(double v) {
+        return PhpJson.round(v);
+    }
+
+    private static Object jsonNumber(double v) {
+        return PhpJson.jsonNumber(v);
     }
 
     // ------------------------------------------------------------- helpers

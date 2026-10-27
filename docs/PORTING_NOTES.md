@@ -890,7 +890,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/updatename.php` | 23 | **ported + tested** |
 | `drill/timeout.php` | 50 | **ported + tested** (`DrillTimeoutParityTest`) |
 | `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
-| `drill/commonLib.php` | 775 | **half ported** — 12 of 22 functions in `DrillCommon.java` |
+| `drill/commonLib.php` | 775 | **15 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **not ported** — returns 501 |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
@@ -899,12 +899,30 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 
 `DrillCommon` present: `writeHistory`, `dbg`, `readParams`, `memberWhere`, `currentMembers`,
 `noMoreStaff`, `initMemberValues`, `init_staff_ana`, `highEfficiency`, `lowEfficiency`,
-`highMorale`, `lowMorale` (plus helpers `truthy`, `named`, `isStrictlyZero`, `extreme`,
-`Pick`).
+`highMorale`, `lowMorale`, `cal_impacts`, `cal_affect`, `writeSummary` (plus helpers
+`truthy`, `named`, `hasName`, `isStrictlyZero`, `extreme`, `Pick`).
 
-`DrillCommon` missing, in dependency order for ENVIRONMENT/ACTION:
-`ana_action`, `ana_style`, `cal_affect`, `cal_impacts`, `cal_swap`, `cal_works`,
-`recal_eff`, `setEnvironment`, `weekSummary`, `writeSummary`.
+`DrillCommon` missing: `cal_swap`, `cal_works`, `recal_eff`, `setEnvironment`, `weekSummary`,
+`ana_action`, `ana_style` — i.e. what remains is the ACTION slice plus the two analysis
+accumulators.
+
+Notable gaps inside the ported functions:
+
+- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` and therefore throws
+  `IllegalStateException` instead of silently skipping. Only `action.php`'s evaluate flow
+  reaches it.
+- `cal_impacts()`'s `$eff` parameter (task skill/morale weights) is only read inside the
+  PHP's `if (false) { ... }` dead block, so the port omits it.
+- `cal_affect()` is called by `environment.php` with 8 arguments against a 9-parameter
+  signature, so the PHP's `$day_number` is null and `null + 2` is 2 — the port hard-codes
+  that reading of `actEffect`.
+- **Column case trap:** every value read out of a profile row MUST go through
+  `PhpRows.get()`. MySQL reports `skillsImpact`, H2 lowercases it to `skillsimpact`, and a
+  bare `Map.get()` silently returns null — which makes every impact factor compute as 0
+  with no error at all. This cost a debugging round; `DrillCommon.rowGet()` exists for it.
+- `writeSummary()` divides every average by `control.maxMembers`, not by the live
+  headcount (the PHP's `currentMembers()` result is overwritten on the next line), and its
+  trend block runs for empty slots, auto-vivifying `members[$c]` on write.
 
 Unported branches answer **501 with the mod name in the body**, deliberately: a silent
 `No Mod` or an empty 200 would let an unported branch look like a working one.

@@ -15,7 +15,7 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **193 passing** (`mvn test`, 22 test classes) |
+| Tests | **200 passing** (`mvn test`, 23 test classes) |
 
 Not yet ported, and why:
 

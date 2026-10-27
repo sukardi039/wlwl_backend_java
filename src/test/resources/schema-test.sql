@@ -275,9 +275,31 @@ create table environment (
   randomOne              int default 0,
   lowMorale              int default 0,
   lowEfficiency          int default 0,
-  highEfficiency         int default 0
+  highEfficiency         int default 0,
+  -- columns drill/environment.php reads (production also has combo/orgDescription)
+  resignAction          varchar(100) default '',
+  resignCheck           int default 0,
+  setAway               int default 0,
+  newComerImpact        int default 0,
+  oldTimerImpact        int default 0,
+  effectiveDays         int default 0
 );
 insert into environment (environmentName) values ('Offshore');
+
+-- drill/commonLib.php::cal_impacts() and cal_affect() look up a morale band here to turn a
+-- skills change into an efficiency change. Production ships 10 rows (AUTO_INCREMENT=11).
+drop table if exists skillseffect;
+create table skillseffect (
+  skillsEffectId   bigint not null auto_increment primary key,
+  minMorale        int default null,
+  maxMorale        int default null,
+  skillsEffect     decimal(5,2) default null,
+  efficiencyEffect decimal(5,2) default null
+);
+insert into skillseffect (minMorale, maxMorale, skillsEffect, efficiencyEffect) values
+  (  0,  30, 0.50, 0.50),
+  ( 31,  60, 0.80, 0.80),
+  ( 61, 100, 1.00, 1.00);
 
 -- modelContent holds JSON TEXT and is decoded+re-embedded by the PHP
 create table model (
