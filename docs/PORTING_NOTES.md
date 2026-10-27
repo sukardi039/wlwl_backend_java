@@ -890,7 +890,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/updatename.php` | 23 | **ported + tested** |
 | `drill/timeout.php` | 50 | **ported + tested** (`DrillTimeoutParityTest`) |
 | `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
-| `drill/commonLib.php` | 775 | **18 of 22 functions** in `DrillCommon.java` |
+| `drill/commonLib.php` | 775 | **complete — 22 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
@@ -902,13 +902,13 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 `highMorale`, `lowMorale`, `cal_impacts`, `cal_affect`, `writeSummary` (plus helpers
 `truthy`, `named`, `hasName`, `isStrictlyZero`, `extreme`, `Pick`).
 
-`DrillCommon` missing: `setEnvironment`, `weekSummary`, `ana_action`, `ana_style` — the
-ACTION slice's remaining helpers.
+`DrillCommon` is COMPLETE: all 22 commonLib functions are ported, so the only thing left
+in `drill/` is `action.php` itself (plus `bossreview.php`, which is only reached from it).
 
-Notable gaps inside the ported functions:
+Notable gap inside a ported function:
 
-- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` (now ported) but the message
-  assembly around it belongs to action.php's evaluate flow, so it still throws
+- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` (ported) but the `$tm` message
+  assembly belongs to action.php's evaluate flow, so it still throws
   `IllegalStateException`. That is the first item of the ACTION slice.
 - `cal_impacts()`'s `$eff` parameter (task skill/morale weights) is only read inside the
   PHP's `if (false) { ... }` dead block, so the port omits it.
@@ -1121,3 +1121,33 @@ logged under the `$state` argument (captured at call time), `task_work[state-1].
 counts up, and the order is nullified (`state = -1`) until that count reaches the task's
 `passingRate`. Closing stage 5 stamps `control.newDeal` and, once only, `control.firstDeal`
 with the same weekday adjustment used elsewhere.
+
+## 26. commonLib is complete — the last four helpers
+
+All 22 functions of `drill/commonLib.php` are now in `DrillCommon`. The final four:
+
+**26.1 `weekSummary` keeps two kinds of total in one object.** `weekOrder`/`weekValue` are
+per-week, while `order`/`value` are CUMULATIVE across the drill (`$odr` never resets). A
+deal is attributed to the week of `day[order.log[5].completedDay].week`, and only when the
+order is at `state == 5` with `workNeeded == 0`. An order closed without that log entry
+lands in week `''` — PHP creates that key, so the port does too rather than skipping it.
+
+**26.2 `setEnvironment` schedules for TOMORROW and has no horizon check.** `$when` is
+`dayNumber + 1` unconditionally, so an event set on what the client thinks is the last day
+creates `day[numberOfDays + 1]` outside the calendar. `c > 0` attributes the event to that
+member's slot; `c == 0` means company-wide (empty staffName/staffExp). Preserved verbatim —
+this is reachable from action.php's environment-naming actions.
+
+**26.3 `ana_style` writes into the same array as the style names.** `analysis.style` holds
+`total`, the three comparison buckets (`desire_actual`, `desire_intent`, `intent_actual`)
+AND one entry per style name. That is why this must stay a `PhpArray`; a typed map would
+either drop the buckets or turn the object into an array.
+
+**26.4 `ana_action` decides positive/negative from the member's `added`,** not from the
+action: `added > 0` is positive for the parent action, the staff member and (when the action
+carries an `actualStyle`) the style trio. The style block is guarded by `strlen($actual)`, so
+an empty `actualStyle` leaves all three style counters untouched. `action.actualStyle` was
+missing from the test fixture and has been added.
+
+With this, `action.php` (891 lines) and `bossreview.php` (108) are the only PHP left in
+`drill/`.

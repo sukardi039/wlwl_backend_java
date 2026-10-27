@@ -231,6 +231,8 @@ create table action (
   actionName   varchar(100) not null primary key,
   actionType   int default null,
   parentAction varchar(100) default null,
+  -- drill/commonLib ana_action(): when set, the action also scores the style counters
+  actualStyle  varchar(100) default null,
   seq          int default 0,
   show         int default 0,
   actionDescription varchar(500) default null,

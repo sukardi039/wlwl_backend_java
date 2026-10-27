@@ -459,6 +459,177 @@ public final class DrillCommon {
                 m.get("efficiencyAdded"), "");
     }
 
+    // ------------------------------------------------ weekly / analysis helpers
+
+    /**
+     * weekSummary(): reset the four per-week counters, then replay completed deals.
+     *
+     * A deal counts when its order sits at state 5 with no work left; it is attributed to
+     * the week of the day logged in `order.log[5].completedDay`, using the *cumulative*
+     * `order`/`value` running totals, while `weekOrder`/`weekValue` are per-week.
+     */
+    public static void weekSummary(PhpArray cont) {
+        Object orderValue = cont.get("orderValue");
+        PhpArray week = cont.get("week") instanceof PhpArray w ? w : new PhpArray();
+        for (Object wv : seq(week)) {
+            if (!(wv instanceof PhpArray w)) continue;
+            PhpArray target = week.child(w.get("weekNumber"));
+            target.put("weekOrder", 0L);
+            target.put("weekValue", 0L);
+            target.put("order", 0L);
+            target.put("value", 0L);
+        }
+
+        long done = 0;
+        double oValue = num(orderValue);
+        long totalOrders = (long) num(PhpJson.path(cont, "control", "totalOrders"));
+        for (long d = 1; d <= totalOrders; d++) {
+            PhpArray order = (PhpArray) PhpJson.path(cont, "orders", d);
+            if (order == null) continue;
+            if (num(order.get("state")) != 5 || num(order.get("workNeeded")) != 0) continue;
+
+            Object completedDay = PhpJson.path(order, "log", 5L, "completedDay");
+            Object wk = PhpJson.path(cont, "day", completedDay, "week");
+            PhpArray w = week.child(wk);
+            w.put("weekOrder", num(w.get("weekOrder")) + 1);
+            w.put("weekValue", jsonNumber(num(w.get("weekOrder")) * oValue));
+            done++;
+            w.put("order", done);
+            w.put("value", jsonNumber(done * oValue));
+        }
+    }
+
+    /**
+     * setEnvironment(): schedule an environment for TOMORROW (`dayNumber + 1`).
+     *
+     * No horizon check: if today is the last day, this creates `day[numberOfDays+1]` and
+     * the event sits outside the calendar. Preserved.
+     *
+     * @param c the member to attribute the event to, or 0 for a company-wide event
+     */
+    public static void setEnvironment(JdbcTemplate jdbc, PhpArray content, String environmentName,
+                                      int c, Object dayNumber) {
+        Map<String, Object> bi = new LinkedHashMap<>();
+        for (Map<String, Object> r : PhpRows.query(jdbc, "select * from baseinfo")) {
+            bi.put(String.valueOf(PhpRows.get(r, "name")), PhpRows.get(r, "displayKey"));
+        }
+
+        Map<String, Object> environment = firstRow(jdbc,
+                "select * from environment where environmentName = ?", environmentName);
+        if (environment == null) return;
+
+        long when = (long) num(dayNumber) + 1;
+        PhpArray event = content.child("day").child(when).child("event");
+        mutableChild(event, "description").append(rowGet(environment, "environmentDescription"));
+        mutableChild(event, "eventName").append(rowGet(environment, "environmentName"));
+        mutableChild(event, "eventExp").append(bi.get(environmentName));
+        PhpArray m = c > 0 ? memberAt(content, c) : null;
+        mutableChild(event, "staffName").append(m == null ? "" : m.get("staffName"));
+        mutableChild(event, "staffExp").append(m == null ? "" : m.get("staffExp"));
+        mutableChild(event, "criteria").append(0L);
+        event.put("count", num(event.get("count")) + 1);
+    }
+
+    /**
+     * ana_style(): score one member's leadership style against the desired one.
+     *
+     * `analysis.style` is keyed by style NAME, and the three comparison buckets
+     * (`desire_actual`, `desire_intent`, `intent_actual`) live in the same array as the
+     * styles — reason enough to keep this in PhpArray rather than a typed map.
+     */
+    public static void anaStyle(PhpArray cont, String intent, Object desired) {
+        PhpArray style = cont.child("analysis").child("style");
+        style.put("total", num(style.get("total")) + 1);
+        PhpArray s = style.child(intent);
+        s.put("count", num(s.get("count")) + 1);
+        PhpArray desireIntent = style.child("desire_intent");
+        desireIntent.put("count", num(desireIntent.get("count")) + 1);
+
+        if (eq(intent, desired)) {
+            s.put("positive", num(s.get("positive")) + 1);
+            desireIntent.put("positive", num(desireIntent.get("positive")) + 1);
+        } else {
+            s.put("negative", num(s.get("negative")) + 1);
+            desireIntent.put("negative", num(desireIntent.get("negative")) + 1);
+        }
+    }
+
+    /**
+     * ana_action(): score one action — against its PARENT action, against the member, and
+     * (when the action carries an `actualStyle`) against the desired style.
+     *
+     * `positive`/`negative` is decided by the member's net `added` for the step, not by the
+     * action itself. The style block only runs when `strlen($actual)` — an empty
+     * `actualStyle` skips all three style counters.
+     */
+    public static void anaAction(JdbcTemplate jdbc, PhpArray cont, int c, String intent,
+                                 Object desired) {
+        Map<String, Object> act = firstRow(jdbc,
+                "select * from action where actionName = ?", intent);
+        Object parentAction = rowGet(act, "parentAction");
+        Object actual = rowGet(act, "actualStyle");
+
+        PhpArray action = cont.child("analysis").child("action");
+        action.put("total", num(action.get("total")) + 1);
+        PhpArray parent = action.child(parentAction);
+        parent.put("count", num(parent.get("count")) + 1);
+
+        PhpArray m = memberAt(cont, c);
+        Object staffName = m == null ? null : m.get("staffName");
+        PhpArray staff = cont.child("analysis").child("staff").child(staffName);
+        PhpArray staffParent = staff.child(parentAction);
+        staffParent.put("count", num(staffParent.get("count")) + 1);
+        staff.put("total", num(staff.get("total")) + 1);
+
+        boolean positive = m != null && num(m.get("added")) > 0;
+        String bucket = positive ? "positive" : "negative";
+        parent.put(bucket, num(parent.get(bucket)) + 1);
+        staffParent.put(bucket, num(staffParent.get(bucket)) + 1);
+        staff.put(bucket, num(staff.get(bucket)) + 1);
+
+        if (actual != null && !actual.toString().isEmpty()) {
+            PhpArray style = cont.child("analysis").child("style");
+            PhpArray desireActual = style.child("desire_actual");
+            PhpArray intentActual = style.child("intent_actual");
+            desireActual.put("count", num(desireActual.get("count")) + 1);
+            intentActual.put("count", num(intentActual.get("count")) + 1);
+
+            PhpArray actionStyle = cont.child("analysis").child("action_style");
+            actionStyle.put("total", num(actionStyle.get("total")) + 1);
+            PhpArray as = actionStyle.child(actual);
+            as.put("count", num(as.get("count")) + 1);
+
+            if (eq(desired, actual)) {
+                desireActual.put("positive", num(desireActual.get("positive")) + 1);
+                as.put("positive", num(as.get("positive")) + 1);
+            } else {
+                desireActual.put("negative", num(desireActual.get("negative")) + 1);
+                as.put("negative", num(as.get("negative")) + 1);
+            }
+            if (m != null && eq(m.get("style"), actual)) {
+                intentActual.put("positive", num(intentActual.get("positive")) + 1);
+            } else {
+                intentActual.put("negative", num(intentActual.get("negative")) + 1);
+            }
+        }
+    }
+
+    /**
+     * PHP array write through a possibly-List value (json_decode gives arrays as Lists).
+     * Same concern as DrillEnvironment.mutableChild(): rewriting element 1 of a decoded
+     * JSON array must not drop element 0.
+     */
+    private static PhpArray mutableChild(PhpArray parent, String key) {
+        Object cur = parent.get(key);
+        if (cur instanceof PhpArray a) return a;
+        PhpArray created = new PhpArray();
+        if (cur instanceof List<?> l) {
+            for (int i = 0; i < l.size(); i++) created.put((long) i, l.get(i));
+        }
+        parent.put(key, created);
+        return created;
+    }
+
     // ------------------------------------------------ movement support
 
     /** PHP round($x, 2) — two decimal places. */
