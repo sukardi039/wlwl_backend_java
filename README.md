@@ -9,16 +9,16 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **4 of 33** (`staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **5 of 33** (`backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **65 passing** (`mvn test`) |
+| Tests | **80 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`backenduser`, `drilloverview`, and 28 others.
+`drilloverview`, `drilleffective`, and 27 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -78,7 +78,13 @@ session/
   RestSessionService.java auth by UPDATE-affected-rows
 db/
   PhpRows.java            MySQL/JDBC -> PHP-compatible JSON values
+  PhpArray.java           PHP array semantics (key coercion, array-vs-object)
+  PhpUniqid.java          uniqid(): 13 lowercase hex
+  MysqlPassword.java      MySQL 4.1 PASSWORD() hash, computed in Java
+service/
+  LicenseAssignment.java  seat allocation shared with registerdemo/
 modules/
+  BackenduserModule.java  port of backenduser/ (list users, create/update)
   StaffsigninModule.java  port of staffsignin/ (login, session, GETAUTH/CHKAUTH)
   BasicinformationModule.java  port of basicinformation/post.php (18 sections)
   BaseinfoModule.java     port of baseinfo/post.php + put.php

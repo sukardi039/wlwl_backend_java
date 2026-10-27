@@ -3,6 +3,9 @@
 -- production dump where known.
 
 drop view  if exists agentlicense_view;
+-- drop views before the tables they read, or the table drops fail on a reused DB
+drop view  if exists license_view;
+drop view  if exists batchlicense_view;
 drop table if exists baseinfo;
 drop table if exists baseclass;
 drop table if exists restsession;
@@ -81,7 +84,10 @@ values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', 1.50, '2026-10-26 15:
        -- active = 0 (not 2): still in basicinformation's "active < 2" list, but it is
        -- what makes staffsignin's company-active gate fail for U4 (405).
        ('pkg2', 'OldCo',  'a1', 0, '2020-01-01', '123456', 0.00, null,                 '2021-01-01'),
-       ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', 0.00, null,                 '2099-12-31');
+       ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', 0.00, null,                 '2099-12-31'),
+       -- pkg5's agent has NO license batch, so backenduser/put.php cannot allocate a
+       -- seat -> 405. active = 2 keeps it out of basicinformation's "active < 2" list.
+       ('pkg5', 'NoAgent', 'zz', 2, '2020-01-01', '123456', 0.00, null,                '2099-12-31');
 
 -- ---------------------------------------------------------------- lookups
 
@@ -211,15 +217,17 @@ create table agent (
 );
 insert into agent (agentId, agentName) values ('a1', 'Acme Agent'), ('a2', 'Old Agent');
 
+-- agentId is NULLABLE: backenduser/put.php inserts a license without one.
 create table license (
   licenseId     varchar(45) not null primary key,
-  agentId       varchar(45) not null,
-  availableFrom date default null,
-  availableTill date default null,
-  -- staffsignin/post.php gates general users on license(userId, packageId);
-  -- the agent view above only needs agentId/dates.
+  batchId       varchar(45)  default null,
+  agentId       varchar(45)  default null,
+  packageId     varchar(100) default null,
+  companyName   varchar(100) default null,
   userId        varchar(45)  default null,
-  packageId     varchar(100) default null
+  userName      varchar(100) default null,
+  availableFrom date default null,
+  availableTill date default null
 );
 insert into license (licenseId, agentId, availableFrom, availableTill) values
   ('L1', 'a1', '2026-01-01', '2099-12-31'),
@@ -228,6 +236,39 @@ insert into license (licenseId, agentId, availableFrom, availableTill) values
 create view agentlicense_view as
   select a.agentId, a.agentName, l.availableFrom, l.availableTill
   from agent a join license l on l.agentId = a.agentId;
+
+-- ------------------------------------------------------------ licenses
+-- The two views backenduser/put.php (and registerdemo/put.php) depend on. The real
+-- definitions live in MySQL and are not in the repo; these are the minimal shapes
+-- the PHP reads: license_view(userId, packageId, batchId) and
+-- batchlicense_view(agentId, batchId, licenseVolume, licenseUsed, issueDate, availableTill).
+
+drop view  if exists license_view;
+drop view  if exists batchlicense_view;
+drop table if exists licensebatch;
+
+create table licensebatch (
+  batchId       varchar(45) not null primary key,
+  agentId       varchar(45) default null,
+  licenseVolume int default 0,
+  licenseUsed   int default 0,
+  issueDate     date default null,
+  availableTill date default null
+);
+
+-- B1 has 10 seats, 3 used (so 7 available). B2 is exhausted and must be skipped.
+insert into licensebatch (batchId, agentId, licenseVolume, licenseUsed, issueDate, availableTill) values
+  ('B1', 'a1', 10, 3, '2026-01-01', '2099-12-31'),
+  ('B2', 'a1',  1, 1, '2025-01-01', '2099-12-31');
+
+create view license_view as
+  select licenseId, batchId, packageId, companyName, userId, userName,
+         availableFrom, availableTill, agentId
+  from license;
+
+create view batchlicense_view as
+  select batchId, agentId, licenseVolume, licenseUsed, issueDate, availableTill
+  from licensebatch;
 
 -- ------------------------------------------------------------ staffsignin
 

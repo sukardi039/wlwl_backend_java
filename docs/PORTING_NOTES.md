@@ -224,3 +224,42 @@ to BCrypt is a separate decision, not part of a parity port.
   and re-encoding would turn `2.50` into `2.5` and reorder keys. `RpcContext.rawJson`
   writes the bytes through untouched, and the parity test asserts exact string
   equality against the stub's body.
+
+## 9. backenduser: two behaviours that look like bugs, and are shipped behaviour
+
+**9.1 The update path never changes the password.** `put.php` builds its UPDATE with
+`userName, loginName, level, active, instructor, companyName, email` — there is no
+password column. So editing a user does not reset their password, even when the
+client sends `loginPassword`. Reproduced literally; do not "fix" it without a
+decision, because the admin UI may rely on editing without re-entering a password.
+
+**9.2 Both POST and PUT return the stored password hash.** Neither blanks
+`loginPassword` (contrast `staffsignin`, which sets it to `""`). `select *` plus
+`json_encode` therefore ships the 41-byte hash to the client. That is a genuine
+information leak in the original and is reproduced deliberately for parity. If and
+when you want it closed, blank it in both handlers and tell the frontend — it is a
+one-line change, but it IS a behaviour change.
+
+**9.3 Empty-result contract differs between the two copies of post.php.** The live
+`post.php` echoes `[]` with **200**. Its predecessor `post_saved_20231209.php` sends
+**204**. Only `post.php` runs. Confirmed by test.
+
+### Licence seats: the rule the code encodes
+
+`get_licenseBatch()` / `update_license()` (now `service/LicenseAssignment`, also used
+by `registerdemo/put.php`) allocate seats like this:
+
+| `qdata.level` | meaning | licence behaviour |
+|---|---|---|
+| `0` | general user | consumes a seat; 405 if none available |
+| `> 0` | backend/agent/instructor user | no seat at all |
+Order of attempts for a general user: reuse the batch already on their
+`(userId, packageId)` licence row, else take the company's agent's first batch with
+`licenseVolume > licenseUsed`, ordered by `issueDate` then `availableTill`.
+A licence created here has **NULL agentId** (the INSERT omits it), which is why the
+real `license.agentId` must be nullable, and why such rows never appear in
+`agentlicense_view`.
+
+One ordering trap: the PHP assigns `$qdata->userId = uniqid()` **before** calling
+`update_license`, so the newly minted id is what lands on the licence row. Passing
+the pre-assignment (empty) id silently attaches licences to user `""`.
