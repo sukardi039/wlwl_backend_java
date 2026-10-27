@@ -207,6 +207,35 @@ public final class DrillCommon {
         return -1;
     }
 
+    /**
+     * init_staff_ana(): seed content.analysis.staff[<name>] with a counter per MAIN action
+     * (show == 1 AND actionName == parentAction), then the staff totals.
+     *
+     * Keyed by STAFF NAME, so two member slots holding the same name share one entry — the
+     * PHP does that too, and it is why the analysis is per person rather than per slot.
+     */
+    public static void initStaffAna(JdbcTemplate jdbc, PhpArray content, Object staffName, Object staffExp) {
+        PhpArray staff = content.child("analysis").child("staff").child(staffName);
+        for (Map<String, Object> act : PhpRows.query(jdbc, "select * from action")) {
+            Object show = PhpRows.get(act, "show");
+            Object name = PhpRows.get(act, "actionName");
+            Object parent = PhpRows.get(act, "parentAction");
+            // PHP: ($act['show'] == 1) and ($act['actionName'] == $act['parentAction'])
+            if (PhpJson.num(show) == 1 && name != null && name.toString().equals(
+                    parent == null ? null : parent.toString())) {
+                PhpArray a = staff.child(name);
+                a.put("count", 0L);
+                a.put("positive", 0L);
+                a.put("negative", 0L);
+                a.put("oneInFour", PhpRows.get(act, "1In4"));
+            }
+        }
+        staff.put("staffExp", staffExp);
+        staff.put("total", 0L);
+        staff.put("positive", 0L);
+        staff.put("negative", 0L);
+    }
+
     /** A member plus the staffExp that travels with it (PHP returns one and passes the other by reference). */
     public record Pick(Object name, Object exp) {
     }

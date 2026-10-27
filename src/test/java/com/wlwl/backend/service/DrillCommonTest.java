@@ -37,8 +37,12 @@ class DrillCommonTest {
     @Test
     @DisplayName("readParams: the whole params_int table as key -> value")
     void readParams() {
-        jdbc.update("insert into params_int (`key`, `value`) values ('ignored_tolerance_days', '4')");
-        assertThat(DrillCommon.readParams(jdbc)).containsEntry("ignored_tolerance_days", "4");
+        // The schema now seeds params_int (the drill engine's tuning values), so probe by
+        // changing one of them instead of inserting a duplicate primary key.
+        jdbc.update("update params_int set `value` = '4' where `key` = 'ignored_tolerance_days'");
+        assertThat(DrillCommon.readParams(jdbc))
+                .containsEntry("ignored_tolerance_days", "4")
+                .containsEntry("target_method", "1");
     }
 
     @Test

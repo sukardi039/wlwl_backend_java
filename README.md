@@ -9,13 +9,13 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 1 in progress (`drill`: 3 of 6 mods + `post.php` outstanding, see `docs/PORTING_NOTES.md` §21) |
+| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 1 in progress (`drill`: 4 of 6 mods + `post.php` outstanding, see `docs/PORTING_NOTES.md` §21) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **185 passing** (`mvn test`, 21 test classes) |
+| Tests | **193 passing** (`mvn test`, 22 test classes) |
 
 Not yet ported, and why:
 
@@ -111,6 +111,9 @@ modules/
   BasicinformationModule.java  port of basicinformation/post.php (18 sections)
   BaseinfoModule.java     port of baseinfo/post.php + put.php
   StaffModule.java        port of staff/post.php
+  DrillModule.java        port of drill/ — mod dispatch: TIMEOUT, RESET, UPDATENAME, INIT
+  DrillCommon.java        (service/) drill/commonLib.php helpers, 12 of 22 so far
+  DrillInit.java          (service/) drill/init.php — builds the drill state document
 ```
 
 ## Adding a module

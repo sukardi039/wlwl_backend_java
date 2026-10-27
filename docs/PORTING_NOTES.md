@@ -890,20 +890,21 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/updatename.php` | 23 | **ported + tested** |
 | `drill/timeout.php` | 50 | **ported + tested** (`DrillTimeoutParityTest`) |
 | `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
-| `drill/commonLib.php` | 775 | **half ported** — 11 of 22 functions in `DrillCommon.java` |
-| `drill/init.php` | 350 | **not ported** — returns 501 |
+| `drill/commonLib.php` | 775 | **half ported** — 12 of 22 functions in `DrillCommon.java` |
+| `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **not ported** — returns 501 |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
 | `drill/bossreview.php` | 108 | **not ported** — only reached via `action.php` |
 | `drill/post.php` | 60 | **not ported** — POST verb: `drillcontrol` + `runs` by `QUERY_STRING` as `userId` |
 
 `DrillCommon` present: `writeHistory`, `dbg`, `readParams`, `memberWhere`, `currentMembers`,
-`noMoreStaff`, `initMemberValues`, `highEfficiency`, `lowEfficiency`, `highMorale`,
-`lowMorale` (plus helpers `truthy`, `named`, `isStrictlyZero`, `extreme`, `Pick`).
+`noMoreStaff`, `initMemberValues`, `init_staff_ana`, `highEfficiency`, `lowEfficiency`,
+`highMorale`, `lowMorale` (plus helpers `truthy`, `named`, `isStrictlyZero`, `extreme`,
+`Pick`).
 
-`DrillCommon` missing, in dependency order for INIT/ENVIRONMENT/ACTION:
-`init_staff_ana`, `ana_action`, `ana_style`, `cal_affect`, `cal_impacts`, `cal_swap`,
-`cal_works`, `recal_eff`, `setEnvironment`, `weekSummary`, `writeSummary`.
+`DrillCommon` missing, in dependency order for ENVIRONMENT/ACTION:
+`ana_action`, `ana_style`, `cal_affect`, `cal_impacts`, `cal_swap`, `cal_works`,
+`recal_eff`, `setEnvironment`, `weekSummary`, `writeSummary`.
 
 Unported branches answer **501 with the mod name in the body**, deliberately: a silent
 `No Mod` or an empty 200 would let an unported branch look like a working one.
@@ -913,3 +914,84 @@ Sample data: the two real dumps in `/opt/data/pastes/paste_3_033955.txt` and
 are **not** RFC-quoted CSV — `content` is a raw JSON blob containing commas and quotes.
 Parse with `json.JSONDecoder().raw_decode` at the `{` after the `action` field, not
 `csv.reader`. `/opt/data/samples/shape_report.py` does this.
+
+## 22. drill/ mod=INIT — three traps and one open question
+
+`drill/init.php` is the only place a drill's state document is CREATED. It is also the
+messiest file in the module: six nested `if ($result->num_rows)` blocks, two separate
+copies of `params_int`, and a response whose status and body are decided by two different
+variables.
+
+**22.1 The body comes from the last SELECT, the status from `$err`.** Every query in the
+file overwrites `$result`, so what gets echoed is whatever the LAST query returned — after
+a successful build that is the re-read `drilldetail` row. The status is a separate
+variable: `$err = 404` when the drill is unknown, `$err = 204` once it exists, and the file
+ends with `if ($err) http_response_code($err);` *after* echoing. On the build path that
+trailing call is a no-op, because the multi-kilobyte echo has already flushed the headers
+(the INIT document is always far larger than PHP's 4096-byte output buffer) — that is the
+only way the Vue client, which only acts on `res.status === 200`, can ever work. So:
+
+| path | body | status |
+|---|---|---|
+| drill has drilldetail rows already | last row | **200** |
+| drill exists, content built | new row | **200** |
+| drill exists, a join fails (template/model/product) | none | **204** |
+| drill unknown, or `drillId` missing | none | **404** |
+
+`DrillInit` applies `$err` only on the no-body path, and says so in a comment. Do not
+"restore" the trailing status call: on Tomcat it would set 204 on a written response.
+
+**22.2 The environment `criteria` bug.** Inside `for ($c=0; $c<$duration; $c++)` the event
+fields are appended to `$content['day'][$here]` but `criteria[]` is appended to
+`$content['day'][$when]` — the event's FIRST day. For a one-day event they coincide; for
+a longer one the criteria lands on the wrong day. Preserved verbatim.
+
+**22.3 Types: PHP only numbers what PHP computed.** See 22.4 — the INIT document is the
+clearest evidence for this anywhere in the codebase, because it mixes both in one field:
+
+| field | source | JSON |
+|---|---|---|
+| `day[n].newOrders` (no event) | copied from `product.ordersPerDay` | `"3"` |
+| `day[n].newOrders` (event day) | `round(3*0.33)` | `1` |
+| `control.numberOfDays` | copied from `template.numberOfDays` | `"40"` |
+| `control.status` | PHP literal | `200` |
+| `manpower.Inspect.pos` | `"10" / 5` (PHP int division) | `2` |
+| `orders[n].day` | loop counter | `1` |
+
+`DrillInit` reproduces the *computed* half exactly (`jsonNumber()` collapses integral
+doubles so `round()` output matches, `phpDivide()` returns an int when evenly divisible).
+It does NOT reproduce the copied half: those values go through `PhpRows`, which maps
+integer columns to JSON numbers.
+
+**22.4 OPEN RULING — `PhpRows` vs production on integer columns.** Production mysqli
+returns numeric columns as STRINGS (the notes already rely on this in §11.1, where
+`'2' !== 2` is always true). `PhpRows` maps `int`/`bigint` columns to JSON numbers, so all
+30 ported modules emit a type that production does not. Evidence is unambiguous — in the
+2026-08 blob `day.8.newOrders` is `1` (computed) while `day.1.newOrders` is `"3"` (copied)
+— but flipping `PhpRows.value()` to strings changes every module's output and every
+module's test expectations, so it needs the product owner's ruling, not a silent edit.
+Recorded as **R5** in `../wlwl_parity_ledger.md`. `DrillInit` is written on `PhpRows`, so
+if the ruling is "strings everywhere" the fix is one method plus test updates — no INIT
+logic changes.
+
+`1In4` is the same story: the dump declares `action.1In4` as `int`, both real blobs store
+`"1"` as a string in `analysis.*.oneInFour`. Do not "fix" either side until R5 is ruled.
+
+Other INIT facts worth knowing:
+
+- `model.modelContent` is the template blob (`staffs`, `environments`, `recruits`,
+  `ordersToComplete`). Its JSON arrays decode to `java.util.List`, not `PhpArray` — a
+  `foreach` over them must accept both shapes (`DrillInit.seq()`). Iterating
+  `PhpArray.values()` only is a silent no-op that drops every member.
+- `staffs[].staffName` is a **staffId**, looked up against `staffprofile_view`. A missing
+  row degrades exactly like PHP: `rand(null,null)` -> `max(0, 2|10)`.
+- `init.php` sets `state` to `blink` / `halt`, `introduced` 0 and `countTime` false. The
+  real blobs show `normal`/1/true **because the client rewrites the row**:
+  `DrillPlatform.vue` flips those during the introduction and `action.php:7` then UPDATEs
+  the step-0 row with the client's content. INIT's own output is the blink/halt version.
+- `select * from template t, drill d` has `duration` (and `templateName`, `modelName`)
+  twice. `mysqli_fetch_assoc` keeps the LAST column, so `$template['duration']` is really
+  `drill.duration`. `PhpRows`' LinkedHashMap reproduces that by accident — keep it.
+- `$pc = $template['numberOfStaff'] / num_rows` divides by the task count. With zero task
+  rows PHP produces INF, `json_encode` fails and the whole response becomes an empty body;
+  the port skips the manpower block instead of reproducing a crash.

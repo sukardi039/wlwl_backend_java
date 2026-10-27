@@ -206,9 +206,12 @@ values ('BasicTpl', 'A basic template', 2, 1, 1);
 
 create table task (
   taskName        varchar(100) not null primary key,
-  taskDescription varchar(500) default null
+  taskDescription varchar(500) default null,
+  -- drill/init.php reads task.stage (it is NOT a taskefficiency column) and uses it as
+  -- the orderStatus key when params_int.target_method = 2
+  stage           int default 0
 );
-insert into task (taskName) values ('Inspect');
+insert into task (taskName, stage) values ('Inspect', 1);
 
 create table style (
   styleName        varchar(100) not null primary key,
@@ -240,12 +243,13 @@ create table action (
   minMemberSize     int default 0,
   affectedWhen      varchar(100) default null,
   affectedIf        varchar(100) default null,
-  away              int default 0
+  away              int default 0,
+  "1In4"            int default 0
 );
-insert into action (actionName, actionType, parentAction, seq, show) values
-  ('Plan',   1, 'Plan',    1, 1),
-  ('Advise', 2, 'Plan',    2, 1),
-  ('Hidden', 1, 'Plan',    3, 0);
+insert into action (actionName, actionType, parentAction, seq, show, "1In4") values
+  ('Plan',   1, 'Plan',    1, 1, 1),
+  ('Advise', 2, 'Plan',    2, 1, 0),
+  ('Hidden', 1, 'Plan',    3, 0, 0);
 
 create table taskefficiency (
   taskEfficiencyId int not null auto_increment primary key,
@@ -470,6 +474,18 @@ create table profilesens (
   efficiencySensitivity  decimal(6,2) default 0.00
 );
 
+-- ------------------------------------------------------------- drill engine
+-- params_int is the engine's tuning table: `value` is varchar(100) even though the name
+-- says int, so every consumer receives a STRING ("1", not 1) — drill/init.php's
+-- `switch ($param['target_method'])` compares it loosely.
+drop table if exists params_int;
+create table params_int ("key" varchar(100) not null primary key, "value" varchar(100) default null);
+insert into params_int ("key", "value") values
+  ('target_method',           '1'),
+  ('dejected_tolerance_days', '10'),
+  ('dejected_warning_days',   '8'),
+  ('ignored_tolerance_days',  '5');
+
 -- ---------------------------------------------------------- drilloverview
 
 drop table if exists drilldetail;
@@ -478,7 +494,11 @@ drop table if exists drillcontrol;
 
 create table drillcontrol (
   drillControlId varchar(45)  not null primary key,
-  userId         varchar(100) not null
+  userId         varchar(100) not null,
+  -- production also carries these; drill/init.php writes currentDrill + drillStartedOn
+  currentDrill   varchar(100) default null,
+  createdOn      datetime     not null default current_timestamp,
+  drillStartedOn datetime     default null
 );
 
 -- Column set from the production dump. drillStatus is an INT (FK drillstatus), not a
