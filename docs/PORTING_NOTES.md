@@ -845,3 +845,33 @@ It calls `saveCompetency()` from `competency.php` (173 lines), which writes the
 Quirks to preserve: the step number comes from the client; the guard is based on the
 last row while the `updatedOn` stamp uses the client's id; and unlike `action.php` /
 `environment.php`, this endpoint does **not** add a `timeNow` field to the response.
+
+## 20. Two blob GENERATIONS — fixtures must cover both
+
+Two real drills were dumped: 2023-12 (42 rows) and 2026-08 (43 rows). The `content`
+document changed shape between them, so any fixture that only models one generation will
+pass while the other silently yields nulls.
+
+| feature | 2023-12 blob | 2026-08 blob |
+|---|---|---|
+| `content.competency` + `content.avg_competency` | **absent** in all 42 rows | **present in exactly 1 row — the terminal one** |
+| `analysis.action.<name>` keys | `name,count,positive,negative,oneInFour` (5) | + `skillsAdded,moraleAdded` (7) |
+| `analysis.action.total` | int (97) | int (59) |
+| `analysis.action` container | **object** | **object** (unchanged) |
+
+This is not a bug in the reader: `saveCompetency()` runs only on the terminal save
+(`timeout.php:27`, `action.php` end-conditions, `environment.php`), and it mutates
+`$content` **before** the terminal INSERT — so competency appears once, in the last row,
+and only on builds that write it into the blob. `drillcapable` is therefore correct as
+written and legitimately returns nulls for older drills.
+
+`content.avg_competency` was **all zeros** in the 2026-08 drill, confirming the
+`if ($rt['cnt'] > 1000)` threshold: peer averages are zeroed unless more than a thousand
+peers share the `seq` **and** `duration`.
+
+Both generations confirm the calendar: `SELECT_STYLE` lands on days
+`1,6,11,16,21,26,31,36` — every fifth day (§18), 8 weeks in the 2026-08 drill.
+
+Both drills also ended the same way — terminal row sharing its predecessor's `dayNumber`
+(2026-08: day 37 with `numberOfDays` 39, `remainingMinutes` `'0:05'`), i.e. written by
+`timeout.php`, not `action.php`.
