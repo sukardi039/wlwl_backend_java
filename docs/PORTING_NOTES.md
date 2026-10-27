@@ -675,6 +675,30 @@ day 33, i.e. day 3 of week 7 (days 31-35).
 
 `content.week` carries `weekNumber`, consistent with 5-day weeks.
 
+### THE CENTRAL RULE: the backend is STATELESS and the client owns the game state
+
+Confirmed by the product owner. The frontend decides what happens — including what an
+environment event *does* — and submits the outcome. The backend has **no memory of what
+happened previously**; it processes what it is handed, appends a snapshot, and replies.
+The `drilldetail` rows are a log the **client** drives, not a server-side machine that
+re-reads its own history.
+
+Consequences that govern the whole `drill/` port:
+
+1. **Never "improve" a writer by re-reading state from the DB.** `environment.php` line 4
+   and `timeout.php:9` build their snapshots from `$qdata->content` — that is the design.
+2. **Each `drill/` endpoint is a pure function**: (submitted state, submitted event) ->
+   (recomputed state, appended snapshot). Much easier to port faithfully than a stateful
+   machine, but it does mean Java must consume client-supplied content, not reconstruct it.
+3. **Do NOT infer per-day row invariants from the data.** An earlier draft claimed "one
+   row per day, plus one per environment event". That over-fit a client behaviour: a day
+   holds more rows simply because the client posted more requests (double submit, a
+   near-timeout post, an event plus its acknowledgement). The backend appends what it is
+   asked to append.
+4. **Trust model (documented risk, not fixed):** the client can submit arbitrary content,
+   so the persisted history and every derived report are only as trustworthy as the
+   browser. Preserving that is parity; hardening it is a separate, explicit decision.
+
 ### `content.environments` is a SCHEDULE, not a log
 
 It is a 6-element list, **byte-identical in all 42 rows** — computed at init, never
@@ -694,10 +718,35 @@ appended:
 | 18 | 360-feedback |
 | 22 | efficiency-dropped |
 
-**Environment events write their own `drilldetail` rows on their scheduled day**, which
-is why such a day holds more than one row. The correlation is exact for days 3, 7, 18 and
-22 (1, 2, 1, 1 extra rows for 1, 2, 1, 1 events). Day 15 has 2 extra rows for 1 event,
-and day 33 has one unexplained extra row before the terminal `COMPLETED` — still open.
+The schedule is data the **client** walks. `init.php` expands it into
+`content.day[<n>].event = {count, eventName[], eventExp[], staffName[], criteria[]}`; when
+that day arrives the frontend submits the event and `environment.php` applies it. So the
+extra rows on days 3, 7, 15, 18 and 22 are client-driven submissions, **not** a backend
+rule — day 15's second row is a double submit, not something to reproduce.
+
+**`environment.php` edits before it appends.** Its first statement (line 4) is:
+
+```php
+update drilldetail set content = '<$qdata->content>', updatedOn = now()
+ where drillDetailId = '<$qdata->drillDetailId>'
+```
+
+i.e. the client's submitted snapshot **overwrites the row the client was on**, and only
+then does the module process the event (`$content['day'][$dayNumber]['event']`) and
+INSERT a new row. So one environment call = 1 in-place update + 1 append. Missing the
+order would double the history.
+
+### Two timeout paths (both client-detected)
+
+1. **Frontend timer fires** -> the client submits, `timeout.php` writes the terminal
+   snapshot: `900` + `COMPLETED` if the drill had reached 600, else `800` + `TIME_OUT`.
+2. **A user submission arrives after the exercise end time** -> the client marks it, which
+   is what leaves the near-terminal blank-`control.action` row (this sample: step 40,
+   day 33) immediately before the terminal row.
+
+`action.php`'s own clock check is **commented out** — `// } else if ($res['now'] >
+$res['expireOn']){ $stat = 800; ... }` — so the server never decides expiry by itself.
+Expiry is always detected client-side, then submitted.
 
 ### Status ladder
 
