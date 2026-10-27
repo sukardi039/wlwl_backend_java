@@ -227,11 +227,38 @@ to BCrypt is a separate decision, not part of a parity port.
 
 ## 9. backenduser: two behaviours that look like bugs, and are shipped behaviour
 
-**9.1 The update path never changes the password.** `put.php` builds its UPDATE with
-`userName, loginName, level, active, instructor, companyName, email` — there is no
-password column. So editing a user does not reset their password, even when the
-client sends `loginPassword`. Reproduced literally; do not "fix" it without a
-decision, because the admin UI may rely on editing without re-entering a password.
+**9.1 The update path never changes the password — by design, not by accident.**
+`put.php`'s UPDATE carries `userName, loginName, level, active, instructor,
+companyName, email` and no password column, so sending `loginPassword` to an update
+does nothing.
+
+That is not an oversight: the system has **no per-user password management for
+general users at all**. There is ONE shared password per company, stored in
+plaintext in `company.commonPW` (created/edited by `package/put.php`), and it is
+pushed into every non-instructor account whenever a drill is activated —
+`controldrill/put.php:24`, commented "refresh password on drill activation":
+
+```php
+if ($mod==0) {
+  $sqlx = "UPDATE backenduser set loginPassword = password('".$row['commonPW']."')
+           where companyName = '".$row['packageId']."' and instructor = 0";
+}
+```
+
+So any password typed while creating a user is effectively temporary: the next
+activation with `mod=0` overwrites it with the company password. `instructor = 1`
+accounts are excluded from that UPDATE and therefore DO own their password — which
+is exactly why `backenduser/put.php` still accepts `loginPassword` on INSERT.
+
+Port implications, so this is not rediscovered the hard way:
+
+- `controldrill/put.php` must be ported with the same bulk reset, using
+  `MysqlPassword.encode(company.commonPW)` in place of `password()`. The WHERE clause
+  must keep `instructor = 0`, or instructors lose their own passwords.
+- Keep the plaintext `commonPW` column as-is. It is a design flaw, not a porting
+  task, and changing it would break the admin's "reset everyone" workflow.
+- `backenduser/put.php` keeping the no-password UPDATE is correct behaviour to
+  preserve. Do not "complete" it by adding a password column.
 
 **9.2 Both POST and PUT return the stored password hash.** Neither blanks
 `loginPassword` (contrast `staffsignin`, which sets it to `""`). `select *` plus
