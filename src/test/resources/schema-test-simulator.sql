@@ -89,3 +89,37 @@ create view impactprofile_view as
   join profilesens ps on s.skillsClass = ps.skillsClass
                      and s.moraleClass = ps.moraleClass
                      and s.efficiencyClass = ps.efficiencyClass;
+
+-- ---------------------------------------------------------------- competency
+-- Written by drill/competency.php::saveCompetency() - the persisted evaluation.
+alter table company add column if not exists companyType varchar(20) default null;
+
+drop table if exists competency;
+create table competency (
+  drillId              varchar(100) default null,
+  userId               varchar(100) not null,
+  seq                  int not null,
+  duration             int default null,
+  companyType          varchar(20) default null,
+  updatedOn            datetime default null,
+  startSkills          int default null,
+  endSkills            int default null,
+  startMorale          int default null,
+  endMorale            int default null,
+  startEfficiency      int default null,
+  endEfficiency        int default null,
+  desiredTotal         int default null,
+  desiredPositive      int default null,
+  salesTarget          int default null,
+  salesAchieved        int default null,
+  skillsCompetency     int default null,
+  moraleCompetency     int default null,
+  efficiencyCompetency int default null,
+  leadershipCompetency int default null,
+  driveCompetency      int default null,
+  totalCompetency      int default null,
+  primary key (userId, seq)
+);
+
+-- drillcontrol.completedDrill is written by timeout.php / action.php / environment.php
+alter table drillcontrol add column if not exists completedDrill int default null;

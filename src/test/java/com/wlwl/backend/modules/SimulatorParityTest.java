@@ -127,7 +127,8 @@ class SimulatorParityTest {
         int eff = ((Number) row.get("efficiencyvalue")).intValue();
         assertThat(skills).isBetween(10, 90);     // P1 min/max
         assertThat(morale).isBetween(20, 80);     // P2 min/max
-        assertThat(eff).isBetween(30, 100);       // P3 min/max
+        // not P3's 30..100: eff is round(skills*0.5 + morale*0.5), so it can be as low as 15
+        assertThat(eff).isBetween(15, 85);
         // efficiencyValue = skills*wSkills + morale*wMorale
         // (int) cast matters: Math.round returns long, and Integer.equals(Long) is false
         assertThat(eff).isEqualTo((int) Math.round(skills * 0.5 + morale * 0.5));
