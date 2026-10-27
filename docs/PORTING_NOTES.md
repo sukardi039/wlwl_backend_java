@@ -682,6 +682,20 @@ A drill ends only on days-exhausted, no-staff-left, or clock expiry. Reaching 60
 (target met) is **not** terminal — the sample hit 600 at step 32 and kept running to
 step 41.
 
+600 is deliberately **not** an end state: the exercise lets the user keep playing after
+the target is hit (confirmed by the product owner), so 600 means "target achieved, still
+in progress". Two consequences for the port:
+
+- **Reporting caveat.** `drilloverview`/`drillcapable`/`consoleuser` print
+  `control.status` raw, so a row showing **600** means the target was met but the drill
+  had not finished — either still running, or **abandoned** (browser closed, so
+  `timeout.php` was never called and the last row was never stamped 900). The UI must
+  not render 600 as "completed". Only 900 is a successful completion; 700/750/800 are
+  failures/timeout.
+- **Never treat 600 as terminal in `drill/`.** Any short-circuit that closes the drill
+  on `ordersCompleted >= ordersToComplete` would end runs early and lose the remaining
+  steps — `action.php:780-789` only *sets* 600 and continues.
+
 ### Terminal labels
 
 `COMPLETED` (when status was 600) / `FAILED` (days or staff exhausted) / `TIME_OUT`.
