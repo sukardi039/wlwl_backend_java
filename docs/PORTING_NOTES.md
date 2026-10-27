@@ -892,7 +892,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
 | `drill/commonLib.php` | 775 | **15 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
-| `drill/environment.php` | 232 | **not ported** — returns 501 |
+| `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
 | `drill/bossreview.php` | 108 | **not ported** — only reached via `action.php` |
 | `drill/post.php` | 60 | **not ported** — POST verb: `drillcontrol` + `runs` by `QUERY_STRING` as `userId` |
@@ -1017,3 +1017,49 @@ Other INIT facts worth knowing:
 - `$pc = $template['numberOfStaff'] / num_rows` divides by the task count. With zero task
   rows PHP produces INF, `json_encode` fails and the whole response becomes an empty body;
   the port skips the manpower block instead of reproducing a crash.
+
+## 23. drill/ mod=ENVIRONMENT — what the event step really does
+
+`environment.php` fires the event the client scheduled for today, then rolls the status
+ladder. Five behaviours are easy to get wrong:
+
+**23.1 An UNTARGETED event never runs `cal_affect` at all.** The broadcast is:
+`if ((member[cx].staffName != $ens) && ($ens != ''))` — the second half means that when the
+event has no `staffName` (the common case) every member is processed by the *impact* loop
+and nobody by the *affect* loop. Getting this backwards double-processes every member and
+inflates the whole board (the first run of the test suite showed exactly that).
+
+**23.2 The event stack shifts down but index 0 survives.** The loop copies `[v]` to `[v-1]`
+for `v` in `1..count-1`, then writes a blank at index `$v` (= count) and decrements
+`count`. With a single event nothing is copied, so the arrays keep their old entry and a
+blank is appended: `eventName` ends up `["Offshore", ""]` with `count: 0`.
+
+**23.3 `count` must stay an integer.** `$count--` in PHP is int arithmetic; doing it in
+double and letting Jackson serialise gives `0.0`, which no blob contains.
+
+**23.4 Writing into a decoded JSON ARRAY needs a PhpArray.** `PhpJson.decodeAssoc` maps JSON
+arrays to `java.util.List`, and `PhpArray.child(key)` on a List *replaces* it — so
+`$event['description'][1] = ''` would silently drop element 0. `DrillEnvironment
+.mutableChild()` converts a List to a PhpArray (same indices) on first write. Any module
+that mutates arrays inside a client-supplied blob needs the same care.
+
+**23.5 The response is gzipped in the PHP.** `header("Content-type: text/javascript")` +
+`Content-Encoding: gzip` + `gzencode($json)`. Browsers decompress transparently, so the port
+answers plain `application/json`: identical after decoding, no hand-rolled gzip, and the
+client's `res.status === 200` / `res.json()` path is unaffected. Deliberate wire-level
+divergence.
+
+Smaller contract details:
+
+- `remainingMinutes` is `date_diff(now, expireOn)->h * 60 + ->i` as `"%d:%02d"` — the DAY
+  component is ignored, so a drill three days out reports only its hour remainder. When the
+  ladder lands on 750/900 the field is the string `"0.00"`.
+- `$grace` uses `=== 0` on `day[dn+3].evaluateStyle`: a MISSING day makes that comparison
+  false, so grace is 4, not 3. The port reproduces that with an `isZero()` that only accepts
+  a real number.
+- `resignCheck` recycles the slot: staffExp/`staffName` cleared, `workingOn` order state set
+  to -1, counters zeroed, `away = rand(resign_embargo_min_days, resign_embargo_max_days)`,
+  and the tolerance values restored from `params_int`.
+- `setAway` stores `environment.duration` into `member.away` (a duration, not a countdown).
+- `drilldetail.drillId` has no FK, so an unknown drill still gets a row and the endpoint
+  answers 200 — the 204 branch needs a genuinely unreadable row.

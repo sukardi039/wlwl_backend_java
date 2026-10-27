@@ -117,7 +117,7 @@ class DrillTimeoutParityTest {
     @DisplayName("drill mod dispatch: unported mods are loud, unknown mods echo 'No Mod'")
     void dispatch() throws Exception {
         mockMvc.perform(put("/backend/drill/").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"restkey\":\"" + KEY + "\",\"method\":\"PUT\",\"mod\":\"ENVIRONMENT\"}"))
+                        .content("{\"restkey\":\"" + KEY + "\",\"method\":\"PUT\",\"mod\":\"ACTION\"}"))
                 .andExpect(status().isNotImplemented());
 
         mockMvc.perform(put("/backend/drill/").contentType(MediaType.APPLICATION_JSON)

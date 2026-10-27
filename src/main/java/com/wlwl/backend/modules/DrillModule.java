@@ -9,6 +9,7 @@ import com.wlwl.backend.db.PhpUniqid;
 import com.wlwl.backend.rpc.ModuleHandler;
 import com.wlwl.backend.rpc.RpcContext;
 import com.wlwl.backend.service.Competency;
+import com.wlwl.backend.service.DrillEnvironment;
 import com.wlwl.backend.service.DrillInit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -65,7 +66,8 @@ public class DrillModule implements ModuleHandler {
             case "TIMEOUT" -> timeout(ctx, qdata);
             case "RESET" -> reset(ctx, qdata);
             case "UPDATENAME" -> updateName(ctx, qdata);
-            case "ACTION", "ENVIRONMENT" -> {
+            case "ENVIRONMENT" -> DrillEnvironment.run(jdbc, mapper, ctx);
+            case "ACTION" -> {
                 // body first: ctx.text() resets the status to 200
                 ctx.text("drill mod " + mod + " is not ported yet");
                 ctx.status(501);
