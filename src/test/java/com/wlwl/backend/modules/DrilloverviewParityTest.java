@@ -73,7 +73,8 @@ class DrilloverviewParityTest {
                 // never triggers a re-rank.
                 .andExpect(jsonPath("$.detail[2].userName").value("Boom"))
                 .andExpect(jsonPath("$.detail[2].rank").value(0))
-                .andExpect(jsonPath("$.detail[2].status").value("notStarted"));
+                // drillStatus is an INT column, so a blank record carries the number
+                .andExpect(jsonPath("$.detail[2].status").value(1));
     }
 
     @Test

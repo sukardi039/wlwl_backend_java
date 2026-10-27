@@ -45,22 +45,24 @@ create table restsession (
   deletedOn datetime     default null
 );
 
--- decimals + dates, to prove PhpRows emits PHP-compatible JSON types
+-- decimals + dates, to prove PhpRows emits PHP-compatible JSON types.
+-- Column set/order matches the production dump (there is no creditBalance/lastSeen).
 create table company (
   packageId      varchar(100) not null primary key,
   companyName    varchar(100) not null,
   agentId        varchar(45)  not null,
   active         int default 0,
+  runOne         varchar(100) default null,
+  activeOne      int default 0,
+  runTwo         varchar(100) default null,
+  activeTwo      int default 0,
+  runThree       varchar(100) default null,
+  activeThree    int default 0,
   availableFrom  date default '2023-01-01',
-  commonPW       varchar(45) default '123456',
-  creditBalance  decimal(6,2) default 0.00,
-  lastSeen       datetime default null,
   availableTill  date default null,
+  commonPW       varchar(45) default '123456',
   -- staffsignin joins backenduser to company and selects c.lang
   lang           varchar(20) default 'en',
-  runOne         varchar(100) default null,
-  runTwo         varchar(100) default null,
-  runThree       varchar(100) default null,
   companyType    varchar(100) default null
 );
 
@@ -89,15 +91,15 @@ insert into baseinfo (baseclass, name, displayKey, orgKey) values
 
 -- pkg1 is live, pkg2 is expired -> only pkg1 must appear in livepackage_*
 insert into company (packageId, companyName, agentId, active, availableFrom, commonPW,
-                     creditBalance, lastSeen, availableTill)
-values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', 1.50, '2026-10-26 15:47:01', '2099-12-31'),
+                     availableTill)
+values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', '2099-12-31'),
        -- active = 0 (not 2): still in basicinformation's "active < 2" list, but it is
        -- what makes staffsignin's company-active gate fail for U4 (405).
-       ('pkg2', 'OldCo',  'a1', 0, '2020-01-01', '123456', 0.00, null,                 '2021-01-01'),
-       ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', 0.00, null,                 '2099-12-31'),
+       ('pkg2', 'OldCo',  'a1', 0, '2020-01-01', '123456', '2021-01-01'),
+       ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', '2099-12-31'),
        -- pkg5's agent has NO license batch, so backenduser/put.php cannot allocate a
        -- seat -> 405. active = 2 keeps it out of basicinformation's "active < 2" list.
-       ('pkg5', 'NoAgent', 'zz', 2, '2020-01-01', '123456', 0.00, null,                '2099-12-31');
+       ('pkg5', 'NoAgent', 'zz', 2, '2020-01-01', '123456', '2099-12-31');
 
 -- ---------------------------------------------------------------- lookups
 
@@ -282,61 +284,87 @@ create table agent (
   availableTill date default null,
   active        int default 0
 );
-insert into agent (agentId, agentName) values ('a1', 'Acme Agent'), ('a2', 'Old Agent');
+-- availableTill is NOT NULL in production and is the ONLY meaningful half of
+-- basicinformation's agent "live" filter (availableFrom is a phantom column there).
+insert into agent (agentId, agentName, availableTill, active) values
+  ('a1', 'Acme Agent', '2099-12-31', 1),
+  ('a2', 'Old Agent',  '2021-01-01', 0);
 
--- agentId is NULLABLE: backenduser/put.php inserts a license without one.
+-- Production license has NO agentId and NO date columns: it hangs off a batch, and
+-- seat/date information comes from licensebatch through the views.
 create table license (
-  licenseId     varchar(45) not null primary key,
-  batchId       varchar(45)  default null,
-  agentId       varchar(45)  default null,
-  packageId     varchar(100) default null,
-  companyName   varchar(100) default null,
-  userId        varchar(45)  default null,
-  userName      varchar(100) default null,
-  availableFrom date default null,
-  availableTill date default null
+  licenseId   varchar(45)  not null primary key,
+  batchId     varchar(45)  not null,
+  packageId   varchar(45)  default null,
+  companyName varchar(100) default null,
+  userId      varchar(45)  default null,
+  userName    varchar(100) default null,
+  usedOn      timestamp    not null default current_timestamp
 );
-insert into license (licenseId, agentId, availableFrom, availableTill) values
-  ('L1', 'a1', '2026-01-01', '2099-12-31'),
-  ('L2', 'a2', '2020-01-01', '2021-01-01');
-
-create view agentlicense_view as
-  select a.agentId, a.agentName, l.availableFrom, l.availableTill
-  from agent a join license l on l.agentId = a.agentId;
 
 -- ------------------------------------------------------------ licenses
--- The two views backenduser/put.php (and registerdemo/put.php) depend on. The real
--- definitions live in MySQL and are not in the repo; these are the minimal shapes
--- the PHP reads: license_view(userId, packageId, batchId) and
--- batchlicense_view(agentId, batchId, licenseVolume, licenseUsed, issueDate, availableTill).
+-- The three views below are transcribed from the production dump. watch out:
+--   * licensebatch has NO licenseUsed column — it is count(license) in the view;
+--   * agentlicense_view is a LEFT JOIN and groups per BATCH, so an agent with two
+--     batches appears twice and an agent with none still appears (NULL batch cols);
+--   * batchlicense_view is ORDER BY availableTill.
+-- H2 requires every non-aggregated column in GROUP BY (MySQL infers it from the PK),
+-- so the GROUP BY lists are longer here than in production. Semantics are identical.
 
 drop view  if exists license_view;
 drop view  if exists batchlicense_view;
+drop view  if exists agentlicense_view;
 drop table if exists licensebatch;
 
 create table licensebatch (
   batchId       varchar(45) not null primary key,
-  agentId       varchar(45) default null,
-  licenseVolume int default 0,
-  licenseUsed   int default 0,
-  issueDate     date default null,
-  availableTill date default null,
-  batchDesc     varchar(200) default null
+  agentId       varchar(45) not null,
+  batchDesc     varchar(100) not null,
+  issueDate     date not null,
+  availableTill date not null,
+  licenseVolume int default 0
 );
 
--- B1 has 10 seats, 3 used (so 7 available). B2 is exhausted and must be skipped.
-insert into licensebatch (batchId, agentId, licenseVolume, licenseUsed, issueDate, availableTill) values
-  ('B1', 'a1', 10, 3, '2026-01-01', '2099-12-31'),
-  ('B2', 'a1',  1, 1, '2025-01-01', '2099-12-31');
+-- B1 has 10 seats and 3 licences (so 7 available); B2 has 1 seat and 1 licence, so it
+-- is exhausted and must be skipped by the seat allocator.
+insert into licensebatch (batchId, agentId, batchDesc, issueDate, availableTill, licenseVolume) values
+  ('B1', 'a1', 'Batch One', '2026-01-01', '2099-12-31', 10),
+  ('B2', 'a1', 'Batch Two', '2025-01-01', '2099-12-31',  1);
+
+insert into license (licenseId, batchId, packageId, companyName, userId, userName) values
+  ('L1', 'B1', 'pkg1', 'Acme', 'U1', 'Alice'),
+  ('L3', 'B1', 'pkg1', 'Acme', 'U2', 'Bob'),
+  ('L4', 'B1', 'pkg3', 'Deleted', 'U3', 'Cara'),
+  -- U4 belongs to pkg2, so his licence must be for pkg2: that way his login passes the
+  -- licence gate and stops at the company-active gate (405), not at "no licence" (406).
+  ('L2', 'B2', 'pkg2', 'OldCo', 'U4', 'Dan');
 
 create view license_view as
-  select licenseId, batchId, packageId, companyName, userId, userName,
-         availableFrom, availableTill, agentId
-  from license;
+  select l.licenseId as licenseId, l.batchId as batchId, l.packageId as packageId,
+         l.companyName as companyName, l.userId as userId, l.userName as userName,
+         l.usedOn as usedOn, b.batchDesc as batchDesc
+  from license l join licensebatch b on l.batchId = b.batchId;
 
 create view batchlicense_view as
-  select batchId, agentId, licenseVolume, licenseUsed, issueDate, availableTill
-  from licensebatch;
+  select a.agentName as agentName, b.batchId as batchId, b.agentId as agentId,
+         b.batchDesc as batchDesc, b.issueDate as issueDate,
+         b.availableTill as availableTill, b.licenseVolume as licenseVolume,
+         count(l.licenseId) as licenseUsed
+  from agent a
+  join licensebatch b on a.agentId = b.agentId
+  left join license l on b.batchId = l.batchId
+  group by a.agentName, b.batchId, b.agentId, b.batchDesc, b.issueDate,
+           b.availableTill, b.licenseVolume
+  order by b.availableTill;
+
+create view agentlicense_view as
+  select a.agentId as agentId, a.agentName as agentName, a.active as active,
+         a.availableTill as availableTill, b.batchId as batchId,
+         b.batchDesc as batchDesc, sum(b.licenseVolume) as licenseVolume,
+         (select count(*) from license l where l.batchId = b.batchId) as licenseUsed
+  from agent a
+  left join licensebatch b on a.agentId = b.agentId
+  group by a.agentId, a.agentName, a.active, a.availableTill, b.batchId, b.batchDesc;
 
 -- ------------------------------------------------------------ staffsignin
 
@@ -373,11 +401,8 @@ insert into backenduser (userId, userName, loginName, loginPassword, level, acti
   ('U6', 'Boom',     'boom',     '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 1, 1, 'pkg1', 1, 'boom@example.com'),
   ('U7', 'MissingK', 'missingk', '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 1, 1, 'pkg1', 1, 'missingk@example.com');
 
-insert into license (licenseId, agentId, availableFrom, availableTill, userId, packageId) values
-  -- agentId 'a9' is not in the agent table, so these do NOT multiply the rows in
-  -- agentlicense_view (which is an inner join on agentId).
-  ('L3', 'a9', '2026-01-01', '2099-12-31', 'U1', 'pkg1'),
-  ('L4', 'a9', '2026-01-01', '2099-12-31', 'U4', 'pkg2');
+-- The seat-reuse path reads license_view(userId, packageId) -> batchId. L1 (U1/pkg1)
+-- and L4 (U3/pkg3) above already cover it; no extra rows needed here.
 
 -- a live session for the GET lookup path; the query string is the sessionId
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
@@ -428,21 +453,36 @@ create table drillcontrol (
   userId         varchar(100) not null
 );
 
+-- Column set from the production dump. drillStatus is an INT (FK drillstatus), not a
+-- string — the blank records the report modules emit therefore carry a NUMBER.
+-- The fixture gives the NOT NULL text columns defaults so the inserts stay short.
 create table drill (
-  drillId        varchar(45) not null primary key,
-  drillControlId varchar(45) not null,
-  seq            int default null,
-  drillStatus    varchar(45) default null,
-  startOn        datetime default null
+  drillId        varchar(100) not null primary key,
+  drillControlId varchar(100) not null,
+  seq            int not null,
+  run            varchar(45)  not null default 'R1',
+  drillStatus    int not null,
+  modelName      varchar(100) not null default 'Model One',
+  modelTemplate  varchar(100) not null default 'BasicTpl',
+  templateName   varchar(100) not null default 'BasicTpl',
+  modelProduct   varchar(100) default null,
+  duration       int not null default 20,
+  startOn        datetime default null,
+  expireOn       datetime default null,
+  endOn          datetime default null
 );
 
 -- drilldetail.content is the JSON blob the drill engine writes; longtext in MySQL.
+-- The key column is drillDetailId (capital D), and `action` is NOT NULL.
 create table drilldetail (
-  drilldetailId varchar(45) not null primary key,
-  drillId       varchar(45) not null,
-  stepNumber    int not null,
-  dayNumber     int default 0,
-  content       longtext
+  drillDetailId varchar(100) not null primary key,
+  drillId       varchar(100) not null,
+  stepNumber    int default 0,
+  dayNumber     int not null default 0,
+  action        varchar(100) not null default '',
+  content       longtext,
+  createdOn     datetime default null,
+  updatedOn     datetime default null
 );
 
 insert into drillcontrol (drillControlId, userId) values
@@ -450,19 +490,20 @@ insert into drillcontrol (drillControlId, userId) values
   ('DC2', 'U2'),   -- Bob
   ('DC3', 'U6');   -- Boom: no drilldetail rows -> blank record
 
+-- drillStatus values are ids from the drillstatus table (3 = "running" here).
 insert into drill (drillId, drillControlId, seq, drillStatus, startOn) values
-  ('D1', 'DC1', 1, 'active',    '2026-01-01 08:00:00'),
-  ('D2', 'DC2', 1, 'active',    '2026-01-01 08:00:00'),
-  ('D3', 'DC3', 2, 'notStarted','2026-01-02 08:00:00');
+  ('D1', 'DC1', 1, 3, '2026-01-01 08:00:00'),
+  ('D2', 'DC2', 1, 3, '2026-01-01 08:00:00'),
+  ('D3', 'DC3', 2, 1, '2026-01-02 08:00:00');
 
 -- D1: sales 5*100 = 500, skills 70 vs 50 (+20, +40.0%), day 3 of 10 -> daysLeft 7
 -- D2: sales 9*100 = 900, skills 90 vs 50 (+40, +80.0%), day 2 of 8  -> daysLeft 6
 --      -> Bob must rank 1, Alice rank 2.
 -- D1 also has an EARLIER step (1) which must be ignored: only max(stepNumber) counts.
-insert into drilldetail (drilldetailId, drillId, stepNumber, dayNumber, content) values
-  ('DD1a', 'D1', 1, 1,
+insert into drilldetail (drillDetailId, drillId, stepNumber, dayNumber, action, content) values
+  ('DD1a', 'D1', 1, 1, 'Plan',
    '{"control":{"status":"old","numberOfDays":10,"remainingMinutes":999},"orderStatus":{"ordersCompleted":0},"orderValue":100,"current":{"teamAvg":{"skills":10,"morale":10,"efficiency":10}},"summary":[{"teamAvg":{"skills":10,"morale":10,"efficiency":10}}]}'),
-  ('DD1b', 'D1', 2, 3,
+  ('DD1b', 'D1', 2, 3, 'Plan',
    '{"control":{"status":"running","numberOfDays":10,"remainingMinutes":120},"orderStatus":{"ordersCompleted":5},"orderValue":100,"current":{"teamAvg":{"skills":70,"morale":60,"efficiency":50}},"summary":[{"teamAvg":{"skills":50,"morale":50,"efficiency":40}}],"competency":{"skillsCompetency":80,"moraleCompetency":70,"efficiencyCompetency":60,"leaderShipCompetency":50,"driveCompetency":40,"totalCompetency":300},"analysis":{"action":[{"oneInFour":0,"count":4,"positive":2,"name":"salesAction"},{"oneInFour":1,"count":2,"positive":1,"name":"coachAction"}]}}'),
-  ('DD2', 'D2', 1, 2,
+  ('DD2', 'D2', 1, 2, 'Plan',
    '{"control":{"status":"running","numberOfDays":8,"remainingMinutes":45},"orderStatus":{"ordersCompleted":9},"orderValue":100,"current":{"teamAvg":{"skills":90,"morale":70,"efficiency":60}},"summary":[{"teamAvg":{"skills":50,"morale":50,"efficiency":40}}],"competency":{"skillsCompetency":70,"moraleCompetency":60,"efficiencyCompetency":50,"leaderShipCompetency":40,"driveCompetency":30,"totalCompetency":250},"analysis":{"action":[{"oneInFour":0,"count":4,"positive":4,"name":"salesAction"},{"oneInFour":1,"count":0,"positive":0,"name":"coachAction"}]}}');

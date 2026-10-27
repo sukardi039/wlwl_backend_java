@@ -63,7 +63,8 @@ class DrillcapableParityTest {
                 // Boom: no drilldetail -> blank record, never re-ranked
                 .andExpect(jsonPath("$.detail[2].userName").value("Boom"))
                 .andExpect(jsonPath("$.detail[2].rank").value(0))
-                .andExpect(jsonPath("$.detail[2].status").value("notStarted"))
+                // drillStatus is an INT column, so a blank record carries the number
+                .andExpect(jsonPath("$.detail[2].status").value(1))
                 .andExpect(jsonPath("$.detail[2].totalCompetency").value(0));
     }
 

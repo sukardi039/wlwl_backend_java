@@ -453,3 +453,67 @@ value is `profileclass`.
 `and profileImpactKey = '<qs>'` to a table with no such column, so ANY query string is
 an SQL error (500) in production too. Reproduced by issuing the same statement, and
 tested. Its PUT also interpolates its numbers unquoted.
+
+## 14. Schema reconciliation against the production dump (2026-10-26)
+
+The real `mysqldump --no-data` arrived after 23 modules were already ported. The
+reference is now `/opt/data/wlwl_schema_real.md`. Everything below was found by
+diffing it against `src/test/resources/schema-test.sql`, and the fixture has been
+corrected so the tests assert against production shapes rather than guesses.
+
+**14.1 The three licence views were FICTION in the fixture and are now transcribed.**
+This mattered, because three ported modules read them:
+
+| view | production definition | what the fixture used to say |
+|---|---|---|
+| `agentlicense_view` | `agent LEFT JOIN licensebatch`, **GROUP BY agentId, batchId**, computed `licenseUsed` | an inner join to `license` — wrong cardinality |
+| `batchlicense_view` | `agent JOIN (licensebatch LEFT JOIN license)`, GROUP BY batchId, **ORDER BY availableTill**, `licenseUsed = count(license.licenseId)` | a plain select from `licensebatch` |
+| `license_view` | `license JOIN licensebatch` | a select from `license` with invented columns |
+
+Consequences now encoded: an agent with two batches appears **twice**, an agent with
+no batch still appears (NULL batch columns), and `licenseUsed` is a COUNT, not a
+stored column.
+
+**14.2 `licenseUsed` exists nowhere as a column.** It is computed by both views. Any
+test that "proved" seat allocation was really reading the fixture's own invented
+column. The Java already queried `batchlicense_view`, so the code was right — the test
+was not.
+
+**14.3 `license` has no `agentId`, no `availableFrom`, no `availableTill`.** A licence
+hangs off a `batchId`; seat and date data come from `licensebatch` through the views.
+
+**14.4 `company` has no `creditBalance` and no `lastSeen`** (both were invented) and
+DOES have `activeOne` / `activeTwo` / `activeThree`, one per run slot.
+
+**14.5 `drill.drillStatus` is an INT** (FK to `drillstatus`), not a string. So the blank
+records emitted by drilloverview / drilleffective / drillcapable carry a NUMBER.
+
+**14.6 `drilldetail`'s key is `drillDetailId`** (capital D), it has a NOT NULL `action`
+column, and `stepNumber` defaults to 0.
+
+**14.7 `basicinformation`'s agent "live" filter reads a column that does not exist.**
+It tests `($row['availableFrom'] <= $timeNow) && ($row['availableTill'] >= $timeNow)`
+over `agentlicense_view`, which exposes only `availableTill`. `$row['availableFrom']` is
+therefore null, and `null <= 'YYYY-MM-DD'` is true, so that half of the condition is
+**always true** — the live filter is effectively `availableTill >= today`. Preserved
+as-is; it is why `agent.availableTill` is NOT NULL in production.
+
+### Still to reconcile (code-side, not yet changed)
+
+These are real type mismatches that MySQL silently coerces and H2 does not, so they
+need changing before the port runs against H2 or a strict SQL mode:
+
+1. **`action.actionType` is `varchar(100)`** (FK `actiontype.actionType`), but
+   `ActionModule` binds it as an int. The PHP passes it as a string.
+2. **`action.affectedIf` is `varchar(10) DEFAULT '>'`** — a comparison OPERATOR, not a
+   baseinfo key. `affectCode = $binfo[$row['affectedIf']]` is therefore normally null.
+3. **`taskefficiency` has no `efficiency` column** (the fixture invented one) and
+   `passingRate` is INT, `target` is decimal(5,2).
+4. **`template.report` is INT**, not a string.
+5. **`agent.availableTill` is `date NOT NULL`** with no default, so agent creation must
+   always supply it.
+6. `action` actually has 31 columns (evaluation, perWeek, `1In4`, useLimit, …); the PHP
+   only writes 14 of them, so untouched columns rely on their DDL defaults.
+
+Also note the tables are **utf8mb3**, not utf8mb4, and `restsession.usedOn` really is
+`varchar(100)` (the PHP stores a datetime string plus microseconds there).

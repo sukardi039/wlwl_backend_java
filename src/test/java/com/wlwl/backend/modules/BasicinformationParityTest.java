@@ -156,8 +156,14 @@ class BasicinformationParityTest {
     @Test
     @DisplayName("agent license view: same live-window filter, but agent_lst keeps everyone")
     void agentLiveFiltering() throws Exception {
-        call().andExpect(jsonPath("$.agent_lst.agent.length()").value(2))
-                .andExpect(jsonPath("$.liveagent_lst.agent.length()").value(1))
+        // agentlicense_view groups per BATCH (a1 has two) and LEFT JOINs (a2 has none),
+        // so agent_lst is a plain append list and repeats the agent name per batch.
+        call().andExpect(jsonPath("$.agent_lst.agent.length()").value(3))
+                // "live" is really just availableTill >= today: the PHP also reads
+                // $row['availableFrom'], which agentlicense_view does not expose, so
+                // null <= today makes that first half always true. a1 is live (twice,
+                // one row per batch); a2 expired in 2021.
+                .andExpect(jsonPath("$.liveagent_lst.agent.length()").value(2))
                 .andExpect(jsonPath("$.liveagent_lst.agent[0]").value("Acme Agent"))
                 .andExpect(jsonPath("$.agent_ref.agent['Acme Agent']").value("a1"));
     }

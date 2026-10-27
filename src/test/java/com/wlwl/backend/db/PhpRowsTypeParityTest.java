@@ -33,14 +33,19 @@ class PhpRowsTypeParityTest {
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.get(0);
 
-        // decimal(6,2) -- PHP emits "1.50", NOT 1.5 or 1.50 as a JSON number
-        assertThat(PhpRows.get(row, "creditBalance")).isEqualTo("1.50");
+        // decimal(6,2) -- PHP emits "1.00", NOT 1.0 or 1 as a JSON number.
+        // (company has no decimal column in production, so use taskefficiency.)
+        Map<String, Object> te = PhpRows.query(jdbc,
+                "select * from taskefficiency where productName = 'W1'").get(0);
+        assertThat(PhpRows.get(te, "duration")).isEqualTo("1.00");
 
         // date -- "2026-01-15", never ISO-8601
         assertThat(PhpRows.get(row, "availableFrom")).isEqualTo("2026-01-15");
 
         // datetime -- space separator, no 'T', no fractional seconds
-        assertThat(PhpRows.get(row, "lastSeen")).isEqualTo("2026-10-26 15:47:01");
+        Map<String, Object> drill = PhpRows.query(jdbc,
+                "select * from drill where drillId = 'D1'").get(0);
+        assertThat(PhpRows.get(drill, "startOn")).isEqualTo("2026-01-01 08:00:00");
 
         // int is an int (JSON number), because PHP's int columns come back as ints
         assertThat(PhpRows.get(row, "active")).isEqualTo(1);
@@ -56,9 +61,9 @@ class PhpRowsTypeParityTest {
                 PhpRows.query(jdbc, "select * from company where packageId = 'pkg1'");
         assertThat(rows.get(0).keySet())
                 .containsExactly("packageid", "companyname", "agentid", "active",
-                        "availablefrom", "commonpw", "creditbalance", "lastseen",
-                        "availabletill", "lang", "runone", "runtwo", "runthree",
-                        "companytype");
+                        "runone", "activeone", "runtwo", "activetwo", "runthree",
+                        "activethree", "availablefrom", "availabletill", "commonpw",
+                        "lang", "companytype");
     }
 
     @Test

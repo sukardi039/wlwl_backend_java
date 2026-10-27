@@ -134,10 +134,11 @@ class CatalogueModulesParityTest {
     // ------------------------------------------------------- table-backed
 
     @Test
-    @DisplayName("agent: lists agentlicense_view, one row per agent with a licence")
+    @DisplayName("agent: agentlicense_view groups per BATCH, and LEFT JOINs so unbatched agents appear")
     void agentList() throws Exception {
+        // a1 has batches B1+B2 -> two rows; a2 has none -> one row with NULL batch columns.
         list("agent")
-                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].agentname").value("Acme Agent"));
     }
 
@@ -150,6 +151,8 @@ class CatalogueModulesParityTest {
                 // which is a 500 both here and in the PHP
                 + "\"availableTill\":\"2027-01-01\",\"active\":1}}")
                 .andExpect(status().isOk())
+                // two batches -> two rows, both renamed
+                .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].agentname").value("Acme Renamed"));
     }
 
