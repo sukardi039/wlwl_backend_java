@@ -275,6 +275,101 @@ public final class DrillAction {
         }
     }
 
+
+    /**
+     * case "MORE_ACTIONS", the block guarded by `$action['actionType'] == 'recruits'`:
+     * move each actioned recruit into the first free slot that wants the action's task.
+     *
+     * A recruit is dropped into a slot when the slot is EMPTY and its task matches
+     * `control.task` (or the slot has no task at all). Stats are rolled from
+     * `staffprofile_view`; the new hire gets `params_int.default_style` as its leadership
+     * style, full tolerances, and an entry appended to `content.staffs` so later steps see
+     * them as staff. The recruit row itself is blanked. Ten recruit rows are scanned
+     * unconditionally (the PHP's `for ($r = 0; $r < 10; $r++)`), and only ONE slot is filled
+     * per recruit (`break`).
+     */
+    static void applyRecruits(JdbcTemplate jdbc, PhpArray content, Map<String, Object> params,
+                              Map<String, Object> actionRow, long maxMembers) {
+        if (!"recruits".equals(str(rowGet(actionRow, "actionType")))) return;
+
+        Object defaultStyle = params.get("default_style");
+        for (long r = 0; r < 10; r++) {
+            PhpArray recruit = (PhpArray) PhpJson.path(content, "recruits", r);
+            if (recruit == null || !truthy(recruit.get("actioned"))) continue;
+
+            for (long c = 1; c <= maxMembers; c++) {
+                PhpArray m = member(content, c);
+                if (m == null || truthy(m.get("staffName"))) continue;
+                Object slotTask = m.get("task");
+                Object actionTask = PhpJson.path(content, "control", "task");
+                if (!eq(slotTask, actionTask) && !str(slotTask).isEmpty()) continue;
+
+                Map<String, Object> stf = firstRow(jdbc,
+                        "select * from staffprofile_view where staffId = ?",
+                        str(recruit.get("staffName")));
+                Map<String, Object> styleRow = firstRow(jdbc,
+                        "select displayKey from baseinfo where name = ?", str(defaultStyle));
+
+                // rand(min,max) over a missing view row is rand(0,0) = 0, exactly like PHP
+                m.put("staffName", recruit.get("staffName"));
+                m.put("task", actionTask);
+                m.put("staffExp", recruit.get("staffExp"));
+                m.put("taskExp", PhpJson.path(content, "control", "taskExp"));
+                m.put("introduced", 1L);
+                m.put("skillsValue", rand(numLong(rowGet(stf, "skillsMin")), numLong(rowGet(stf, "skillsMax"))));
+                m.put("moraleValue", rand(numLong(rowGet(stf, "moraleMin")), numLong(rowGet(stf, "moraleMax"))));
+                m.put("efficiencyValue", rand(numLong(rowGet(stf, "efficiencyMin")), numLong(rowGet(stf, "efficiencyMax"))));
+                m.put("offdays", 0L);
+                m.put("style", defaultStyle);
+                m.put("styleExp", rowGet(styleRow, "displayKey"));
+                m.put("away", 0L);
+                m.put("attention", params.get("dejected_tolerance_days"));
+                m.put("attenWarning", params.get("dejected_warning_days"));
+                m.put("listen", params.get("ignored_tolerance_days"));
+                m.put("trend", 0L);
+
+                DrillCommon.initStaffAna(jdbc, content, m.get("staffName"), m.get("staffExp"));
+
+                // the recruit joins content.staffs, so later steps treat them as staff
+                Object ss = content.get("staffs");
+                PhpArray staffs = mutableChild(content, "staffs");
+                PhpArray entry = staffs.child((long) seqSize(ss));
+                entry.put("staffName", m.get("staffName"));
+                entry.put("staffExp", m.get("staffExp"));
+                entry.put("task", m.get("task"));
+                entry.put("taskExp", m.get("taskExp"));
+
+                m.put("initSkillsValue", m.get("skillsValue"));
+                m.put("initMoraleValue", m.get("moraleValue"));
+                m.put("initEfficiencyValue", m.get("efficiencyValue"));
+
+                recruit.put("staffName", "");
+                recruit.put("staffExp", "");
+                recruit.put("actioned", 0L);
+                break;                          // one slot per recruit
+            }
+        }
+    }
+
+    private static long seqSize(Object v) {
+        if (v instanceof PhpArray a) return a.size();
+        if (v instanceof List<?> l) return l.size();
+        return 0;
+    }
+
+    private static long rand(long min, long max) {
+        if (max <= min) return min;
+        return java.util.concurrent.ThreadLocalRandom.current().nextLong(min, max + 1);
+    }
+
+    private static long numLong(Object v) {
+        return (long) num(v);
+    }
+
+    private static boolean eq(Object a, Object b) {
+        return a == null ? b == null : a.toString().equals(b == null ? null : b.toString());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static String remaining(Map<String, Object> drill) {

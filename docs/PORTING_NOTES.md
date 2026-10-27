@@ -1222,3 +1222,32 @@ are INT columns and the PHP splices them as quoted strings, so MySQL casts `''` 
 
 **28.6 Same gzip divergence as environment.php:** the PHP answers `text/javascript` +
 `Content-Encoding: gzip`; the port answers plain JSON.
+
+## 29. MORE_ACTIONS — decomposition (recruit block ported)
+
+The branch runs from `case "MORE_ACTIONS":` to the shared tail, ~660 lines. It is laid out
+as a sequence of independent passes over the member list, so it ports in this order:
+
+| # | block | lines | state |
+|---|---|---|---|
+| 1 | `actionType == 'recruits'` — move actioned recruits into free slots | 77–124 | **ported** (`DrillAction.applyRecruits` + `DrillRecruitMathTest`) |
+| 2 | `swapTask` — pairwise task swap between actioned members | 126–176 | not ported |
+| 3 | `used.actions[parentAction]++`, then the per-member impact loop (`cal_impacts` / `cal_affect`, `recal_eff`, `cal_works`, history) | 179–~500 | not ported |
+| 4 | meet-the-boss / order-stage progression and `setEnvironment` triggers | ~500–700 | not ported |
+| 5 | `writeSummary` leftovers before the shared tail at 739 | ~700–738 | not ported |
+
+Notes for whoever picks this up:
+
+- **The recruit block scans exactly ten recruit rows** (`for ($r = 0; $r < 10; $r++)`,
+  hard-coded) and fills ONE slot per recruit (`break`). A slot is eligible when it is empty
+  AND (`slot.task == control.task` OR the slot has no task at all). Stats come from
+  `staffprofile_view`; a missing view row degrades to `rand(0,0)` = 0 rather than erroring.
+  The recruit is appended to `content.staffs` so later steps see them as staff, and the
+  recruit row itself is blanked (`staffName`/`staffExp`/`actioned`).
+- **The swap block mutates in pairs**: it remembers the first actioned member's task, then
+  for each subsequent actioned member it temporarily sets both `action` fields to
+  `'evaluate-' . otherTask`, calls `cal_swap` on each with type `swap-task`, restores the
+  `action` strings, swaps the tasks, and nullifies any order either was working on
+  (`state = -1`, `workingOn = 0`).
+- `content.used.actions[parentAction]++` counts how often an action GROUP was used (the
+  array exists from init as `used.actions = []`).
