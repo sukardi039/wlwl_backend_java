@@ -38,9 +38,14 @@ public class BackendGateway {
 
     /**
      * Modules whose index.php does NOT include restdx.inc, i.e. the pre-auth
-     * surface: signin/, staffsignin/, registerdemo/. They do their own dispatch.
+     * surface: staffsignin/, registerdemo/. They do their own dispatch.
+     *
+     * signin/ used to be listed here. It is DROPPED (see the parity ledger): it queries
+     * three tables that do not exist in the production schema and the Vue client never
+     * calls it, so it is not ported and /backend/signin/ answers 404 — where the PHP
+     * would fatal into a 500. Unobservable, because nothing requests it.
      */
-    private static final Set<String> PUBLIC_MODULES = Set.of("signin", "staffsignin", "registerdemo");
+    private static final Set<String> PUBLIC_MODULES = Set.of("staffsignin", "registerdemo");
 
     private final ModuleRegistry registry;
     private final RestSessionService sessions;

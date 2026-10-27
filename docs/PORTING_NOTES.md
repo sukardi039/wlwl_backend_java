@@ -574,3 +574,31 @@ decode, which is why it could be ported without knowing the blob's internal keys
   with a dependency error. `schema-test.sql` now drops the simulator views first.
 - `assertThat(intValue).isEqualTo(Math.round(...))` compiles but always fails:
   `Math.round` returns a long, and `Integer.equals(Long)` is false. Cast to int.
+
+## 16. signin/ is dropped, not ported (ruling)
+
+`signin/` (6 files, 144 LOC) is **out of scope by explicit user ruling**. Three
+independent findings, any one of which would have been enough:
+
+1. **Its tables do not exist.** It reads `wxuser` and `studentlist` and writes `tasks`;
+   the production dump contains 44 objects and none of them. Its login is broken even
+   past that: `insert into restsession (sessionId, userId, restkey)` omits `createdOn`,
+   which is `datetime NOT NULL` with no default — the working `staffsignin/post.php:31`
+   passes `now()`, so this is a defect rather than a variant.
+2. **Nothing calls it.** The Vue app issues 45 distinct `backend/...` URLs and every one
+   is a hardcoded literal — no template literal, no dynamic module name — so the set is
+   exhaustive. `backend/signin/` is not in it; `backend/staffsignin/` is (7 refs). All
+   other "signin" tokens in `src/` are help screens (`Singin_help.vue`,
+   `Helps.signin-*`, `images/signin.png`). There is no `dist/` build to hide a call.
+3. **It was switched off on purpose.** `vue.config.js` still carries a commented-out
+   `pathRewrite: { '^/backend/signin/' : '/backend/signin/index.php' }` in both proxy
+   blocks.
+
+Consequence for behaviour: `/backend/signin/` returns **404** here, where the PHP would
+fatal into a **500**. That divergence is deliberate and unobservable. `signin` was also
+removed from the gateway's `PUBLIC_MODULES` set, since there is no handler to route to.
+
+Related, recorded while verifying: the frontend calls five endpoints that have **no**
+backend directory (`idx_baseinfo`, `idx_baseclass`, `idx_staff`, `idx_profileclass`,
+`student` — 15 call sites). Those 404 in PHP production today too, so the gateway's 404
+is faithful; they are missing features upstream, not porting gaps.

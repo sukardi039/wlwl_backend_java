@@ -9,7 +9,7 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **29 of 33** (see `../wlwl_parity_ledger.md`) |
+| Modules ported | **29 of 33** — plus 1 dropped by ruling (`signin`), 2 blocked on `drilldetail.content`, 1 awaiting a ruling (`messages`). See `../wlwl_parity_ledger.md` |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
@@ -23,7 +23,7 @@ Not yet ported, and why:
 |---|---|
 | `drill` (5,617 LOC) | **blocked** — needs real `drilldetail.content` sample rows |
 | `drillcompare` (56) | **blocked** — reads `content.current.teamAvg.efficiency` |
-| `signin` (144) | **dead** — `wxuser`, `studentlist`, `tasks` do not exist in production |
+| `signin` (144) | **DROPPED by ruling** — dead: no `wxuser`/`studentlist`/`tasks`, and 0 client call sites |
 | `messages` (51) | **dead** — `smshead_view`, `smslist_view`, `StudentList` do not exist |
 See `../wlwl_parity_ledger.md`.
 
