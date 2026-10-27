@@ -377,3 +377,39 @@ Also note: `modelContent` must arrive as JSON **text**. If the client sends an o
 PHP interpolates a stdClass into SQL and fatals; the port throws so the gateway returns
 500 for the same reason. And `put.php` decodes but does NOT run the repair pass — only
 `post.php` repairs.
+
+## 12. The profile matrix modules (profileimpact / profileaffect / profilesens)
+
+Three modules around one idea: a matrix with one row per (skillsClass, moraleClass,
+efficiencyClass) combination, seeded lazily on first read.
+
+**12.1 `profileaffect` and `profileimpact` share a table AND a post.php.** Their
+`post.php` files are byte-identical and both read `profileimpact`; the affect and
+impact column sets live on the SAME rows. Only `put.php` differs: `Impact*`/`impactMsg`
+versus `Affect*`/`affectMsg`. Hence the shared `AbstractProfileImpactModule` in the
+port, with each subclass supplying its column prefix — and hence these two cannot be
+tested independently of each other.
+
+**12.2 Seeding enumerates a cartesian product of ONE class per profile.** The three
+nested loops each filter `profileName == profiles[i]`, where `profiles[]` comes from
+`baseinfo where baseclass = 'profiles'` **in fetch order**. With 2 classes per profile
+that is 8 rows. If fewer than three profile names exist, `$profiles[1]`/`[2]` are
+undefined, nothing matches, and the caller returns 204.
+
+Seeding is triggered differently: `profileimpact` seeds when the rows **for that
+impactClass** are empty; `profilesens` seeds only when the **whole table** is empty
+(it has no impactClass column).
+
+**12.3 The two put.php files interpolate NUMBERS unquoted.** A non-numeric value is an
+SQL syntax error there, i.e. a 500. The port throws rather than coercing, so the
+status code is unchanged. The same applies to the key: `where profileImpactKey = <raw>`
+is unquoted in put.php but **quoted** (`'...'`) in post.php — which is why a non-numeric
+query string simply matches nothing on POST but 500s on PUT.
+
+**12.4 `profilesens/put.php` returns FEWER fields than its post.php.** POST adds three
+`*Exp` (profileclass display name) and three `*Prf` (baseinfo.displayKey) fields; PUT
+adds only the `*Exp` three. Faithful, and asserted by test.
+
+`*Prf` is worth noting: it is `baseinfo.displayKey` — the short code such as `SK` —
+obtained through the cross join `from profileclass, baseinfo where profileName = name`,
+not from profileclass.

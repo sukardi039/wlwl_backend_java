@@ -75,7 +75,12 @@ insert into baseinfo (baseclass, name, displayKey, orgKey) values
   ('action', 'Plan',       'PL', null),
   ('action', 'Advise',     'AD', null),
   ('action', 'Hidden',     'HD', null),
-  ('environment','Offshore','OF', null);
+  ('environment','Offshore','OF', null),
+  -- the three profile names the profile* modules read from baseclass='profiles';
+  -- the profileClassCode -> displayKey map comes from these rows
+  ('profiles','skills',    'SK', null),
+  ('profiles','morale',    'MO', null),
+  ('profiles','efficiency','EF', null);
 
 -- pkg1 is live, pkg2 is expired -> only pkg1 must appear in livepackage_*
 insert into company (packageId, companyName, agentId, active, availableFrom, commonPW,
@@ -110,7 +115,12 @@ create table profileclass (
 
 insert into profileclass (profileClassCode, profileClassDisplayName, profileName) values
   ('P1', 'Low',    'skills'),
-  ('P2', 'Medium', 'morale');
+  ('P2', 'Medium', 'morale'),
+  -- two classes per profile => the seeding triple loop produces 2x2x2 = 8 rows
+  ('P3', 'High',   'efficiency'),
+  ('P4', 'High',   'skills'),
+  ('P5', 'Low',    'morale'),
+  ('P6', 'Low',    'efficiency');
 
 -- skillsProfile points at a real class; moraleProfile does NOT (proves the
 -- unguarded $exp[...] lookup emits JSON null for a missing code).
@@ -323,6 +333,40 @@ insert into license (licenseId, agentId, availableFrom, availableTill, userId, p
 -- a live session for the GET lookup path; the query string is the sessionId
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
 values ('sess1', 'U1', 'RK1', '2026-01-01 00:00:00', null, null);
+
+-- ------------------------------------------------- profileimpact/profilesens
+
+drop table if exists profileimpact;
+drop table if exists profilesens;
+
+-- One row per (skillsClass, moraleClass, efficiencyClass) combination. The impact
+-- and affect column sets BOTH live here: profileimpact/put.php writes the Impact
+-- columns, profileaffect/put.php writes the Affect columns, on the SAME rows.
+create table profileimpact (
+  profileImpactKey   int not null auto_increment primary key,
+  impactClass        varchar(100) default null,
+  skillsClass        varchar(100) default null,
+  moraleClass        varchar(100) default null,
+  efficiencyClass    varchar(100) default null,
+  skillsImpact       decimal(6,2) default 0.00,
+  moraleImpact       decimal(6,2) default 0.00,
+  efficiencyImpact   decimal(6,2) default 0.00,
+  impactMsg          varchar(500) default null,
+  skillsAffect       decimal(6,2) default 0.00,
+  moraleAffect       decimal(6,2) default 0.00,
+  efficiencyAffect   decimal(6,2) default 0.00,
+  affectMsg          varchar(500) default null
+);
+
+create table profilesens (
+  profileSensitivityKey  int not null auto_increment primary key,
+  skillsClass            varchar(100) default null,
+  moraleClass            varchar(100) default null,
+  efficiencyClass        varchar(100) default null,
+  skillsSensitivity      decimal(6,2) default 0.00,
+  moraleSensitivity      decimal(6,2) default 0.00,
+  efficiencySensitivity  decimal(6,2) default 0.00
+);
 
 -- ---------------------------------------------------------- drilloverview
 

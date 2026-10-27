@@ -9,16 +9,16 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **9 of 33** (`model`, `drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **12 of 33** (`profileaffect`, `profileimpact`, `profilesens`, `model`, `drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **107 passing** (`mvn test`) |
+| Tests | **120 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`signin`, `drillcompare`, `profileaffect` and 20 others.
+`signin`, `registerdemo`, `drillcompare` and 17 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -83,7 +83,11 @@ db/
   MysqlPassword.java      MySQL 4.1 PASSWORD() hash, computed in Java
 service/
   LicenseAssignment.java  seat allocation shared with registerdemo/
+  ProfileSeeder.java      the 3-way profile combination seeding
+  ProfileExpansion.java   code -> display name / display key maps
 modules/
+  ProfileimpactModule.java / ProfileaffectModule.java  (shared post.php)
+  ProfilesensModule.java   port of profilesens/ (Exp + Prf)
   ModelModule.java         port of model/ (get/post/put)
   DrilloverviewModule.java port of drilloverview/ (scoreboard + ranking)
   DrilleffectiveModule.java port of drilleffective/ (per-action percentages)
