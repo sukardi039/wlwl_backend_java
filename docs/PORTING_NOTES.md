@@ -890,7 +890,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/updatename.php` | 23 | **ported + tested** |
 | `drill/timeout.php` | 50 | **ported + tested** (`DrillTimeoutParityTest`) |
 | `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
-| `drill/commonLib.php` | 775 | **15 of 22 functions** in `DrillCommon.java` |
+| `drill/commonLib.php` | 775 | **18 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
@@ -902,15 +902,14 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 `highMorale`, `lowMorale`, `cal_impacts`, `cal_affect`, `writeSummary` (plus helpers
 `truthy`, `named`, `hasName`, `isStrictlyZero`, `extreme`, `Pick`).
 
-`DrillCommon` missing: `cal_swap`, `cal_works`, `recal_eff`, `setEnvironment`, `weekSummary`,
-`ana_action`, `ana_style` — i.e. what remains is the ACTION slice plus the two analysis
-accumulators.
+`DrillCommon` missing: `setEnvironment`, `weekSummary`, `ana_action`, `ana_style` — the
+ACTION slice's remaining helpers.
 
 Notable gaps inside the ported functions:
 
-- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` and therefore throws
-  `IllegalStateException` instead of silently skipping. Only `action.php`'s evaluate flow
-  reaches it.
+- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` (now ported) but the message
+  assembly around it belongs to action.php's evaluate flow, so it still throws
+  `IllegalStateException`. That is the first item of the ACTION slice.
 - `cal_impacts()`'s `$eff` parameter (task skill/morale weights) is only read inside the
   PHP's `if (false) { ... }` dead block, so the port omits it.
 - `cal_affect()` is called by `environment.php` with 8 arguments against a 9-parameter
@@ -1085,3 +1084,40 @@ client's URL is `/backend/drill/?<userId>`, with the trailing slash before the `
 - `template.duration` is INT in production but DECIMAL in the test fixture, so the insert
   coerces it with `PhpJson.num()` — otherwise H2 refuses to put `"0.00"` into an int column
   while MySQL would have coerced silently.
+
+## 25. The movement maths (cal_works / cal_swap / recal_eff)
+
+**25.1 `cal_swap`'s profilesens query cannot succeed — by design of the schema.** It asks for
+`impactClass`, `skillsMin`/`Max`, `moraleMin`/`Max`, `efficiencyMin`/`Max` FROM
+`profilesens`. The production dump has none of those columns there (they live in
+`profileimpact`), and the query fails on every call: `mysqli_query` returns false, `$res` is
+null, and on PHP 7 every `$res[...]` read is 0. Consequences the port reproduces:
+
+- the `skillsAdded != 0` branch computes `x * $seff * 0 + 0 * 0` = **0**, so a swap that
+  changes skills never moves efficiency through the impact term;
+- the `moraleAdded != 0` branch survives, because it does not multiply by `$res`:
+  `round($swapSkills * ($moraleAdded / $moraleValue))`;
+- `$seff` (the skillseffect band) is fetched but ends up unused for the same reason.
+
+Verified two ways: `grep "from profilesens" drill/*.php` matches only that one line, and the
+dump's `profilesens` DDL is `skillsClass/moraleClass/efficiencyClass` + three sensitivities.
+The 2026-08 blob agrees — step 3 carries `半夏子/evaluate-4-negotiate: 0, 0, 0`.
+
+**25.2 The 9-character prefix is `evaluate-`, not `swap-task-`.** `action.php` sets
+`$content['members'][$c]['action'] = 'evaluate-' . $task` and then calls
+`cal_swap(..., 'swap-task')` — the *type* argument is `swap-task` while the *string* is
+`evaluate-<task>`. The hard-coded `substr($swapTask, 9)` strips exactly `evaluate-`. Getting
+this wrong makes every swap silently no-op (both task_eff lookups miss, skills land on 0).
+
+**25.3 `intval()` vs `round()`.** `cal_swap` truncates toward zero for the weight
+conversion and for `addedAvg` (`intval($added / 3)`), so a negative `added` of -8 gives
+addedAvg -2, not -3. `recal_eff` uses `round()` and has **no clamp at all**, so it is the one
+place efficiency can go above 100 (or below 0); `cal_swap` clamps 0..100; `cal_impacts`
+clamps 0..120. Three different rules in three neighbouring functions — do not unify them.
+
+**25.4 `cal_works` measures work in two places at once.** `member.workAvailable` and
+`order.workNeeded` both move, both rounded to 2 decimals. When the order completes, it is
+logged under the `$state` argument (captured at call time), `task_work[state-1].worked`
+counts up, and the order is nullified (`state = -1`) until that count reaches the task's
+`passingRate`. Closing stage 5 stamps `control.newDeal` and, once only, `control.firstDeal`
+with the same weekday adjustment used elsewhere.

@@ -5,6 +5,7 @@ import com.wlwl.backend.db.PhpJson;
 import com.wlwl.backend.db.PhpRows;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -271,6 +272,211 @@ public final class DrillCommon {
         return v instanceof PhpArray a ? a : null;
     }
 
+
+    // ------------------------------------------------ movement maths
+
+    /**
+     * cal_works(): spend a member's available work on the order they are doing.
+     *
+     * Two units of measure meet here — the member's `workAvailable` and the order's
+     * `workNeeded` — both rounded to 2 decimals, because the PHP calls `round($x, 2)`.
+     * When the order is finished it is logged against `$state` (the state AT CALL TIME,
+     * passed in, not re-read), `task_work[state-1].worked` counts up, and the order is
+     * nullified (`state = -1`) until the count reaches the task's `passingRate`.
+     */
+    public static void calWorks(PhpArray content, int c, Object d, long day, long state,
+                                Map<String, Object> params) {
+        PhpArray m = memberAt(content, c);
+        Object orderRaw = PhpJson.path(content, "orders", d);
+        if (m == null || !(orderRaw instanceof PhpArray o)) return;
+
+        double available = num(m.get("workAvailable"));
+        double needed = num(o.get("workNeeded"));
+
+        if (available >= needed) {
+            m.put("workAvailable", round2(available - needed));
+            o.put("workNeeded", 0L);
+            o.put("assignedTo", "");
+            m.put("workingOn", 0L);
+            o.child("log").child(state).put("completedDay", day);
+
+            long orderState = (long) num(o.get("state"));
+            PhpArray tw = content.child("task_work").child(orderState - 1);
+            tw.put("worked", num(tw.get("worked")) + 1);
+
+            Object te = PhpJson.path(content, "task_eff", orderState - 1);
+            double passingRate = num(PhpJson.path(te, "passingRate"));
+            if (num(tw.get("worked")) < passingRate) {
+                o.put("state", -1L);              // not enough repeats: the order dies
+            } else {
+                tw.put("worked", 0L);
+                if (orderState == 5) {            // the deal is closed
+                    content.put("newDeal", 1L);
+                    double days = num(params.get("firstDeal_effective_days"));
+                    PhpArray control = content.child("control");
+                    control.put("newDeal", jsonNumber(day + days + 1));
+                    if (!control.containsKey("firstDeal")) {
+                        double firstDeal = day + days + 1;
+                        long wd = day % 5;
+                        wd = wd != 0 ? wd : 5;
+                        if (days + wd + 1 > 5) firstDeal++;
+                        if (days + wd + 1 > 10) firstDeal++;
+                        control.put("firstDeal", jsonNumber(firstDeal));
+                    }
+                }
+            }
+        } else {
+            o.put("workNeeded", round2(needed - available));
+            m.put("workAvailable", 0L);
+        }
+    }
+
+    /**
+     * cal_swap(): move a member onto the task named in `member.action`, which action.php
+     * sets to `'evaluate-' . task` — the hard-coded `substr($swapTask, 9)` strips exactly
+     * that 9-character prefix, so the remainder is a bare taskName ("2-evaluate").
+     *
+     * Skills/morale are re-expressed at the new task's weights, so a task that leans on
+     * skills converts morale into skills and vice versa. `intval()` (truncation, not
+     * rounding) is used for the conversion, and efficiency is clamped to 0..100 here —
+     * unlike recal_eff(), which has no clamp at all.
+     *
+     * THE PROFILESENS LOOKUP IN THE PHP CANNOT SUCCEED. It asks for
+     * `impactClass`/`skillsMin`/`skillsMax`/`moraleMin`/`moraleMax`/`efficiencyMin`/
+     * `efficiencyMax` FROM profilesens, and the production dump has none of those columns
+     * there (they live in profileimpact). mysqli_query returns false, `$res` is null, and
+     * on PHP 7 every `$res[...]` read is therefore 0 — so the sensitivity/impact terms drop
+     * out of the efficiency formula. The port does not issue SQL that cannot succeed; it
+     * reproduces the resulting arithmetic, and this comment is why the terms are missing.
+     */
+    public static Swap calSwap(PhpArray content, int c, String type) {
+        PhpArray m = memberAt(content, c);
+        if (m == null || !hasName(m.get("staffName"))) return new Swap(null, null);
+
+        String currentTask = str(m.get("task"));
+        String action = str(m.get("action"));
+        String code = action.length() > 9 ? action.substring(9) : "";   // strips "evaluate-"
+
+        double currSkillsWeight = 0;
+        double currMoraleWeight = 0;
+        for (Object tv : seq(content.get("task_eff"))) {
+            if (!(tv instanceof PhpArray tsk)) continue;
+            if (eq(tsk.get("taskName"), currentTask)) {
+                currMoraleWeight = num(tsk.get("moraleWeight"));
+                currSkillsWeight = num(tsk.get("skillsWeight"));
+            }
+        }
+
+        double swapSkillsWeight = 0;
+        double swapMoraleWeight = 0;
+        Object swapTaskName = null;
+        boolean matched = false;
+        for (Object tv : seq(content.get("task_eff"))) {
+            if (!(tv instanceof PhpArray tsk)) continue;
+            if (code.equals(str(tsk.get("taskName")))) {
+                swapMoraleWeight = num(tsk.get("moraleWeight"));
+                swapSkillsWeight = num(tsk.get("skillsWeight"));
+                swapTaskName = tsk.get("taskDisplayName");
+                matched = true;
+            }
+        }
+
+        double currSkills = num(m.get("skillsValue"));
+        double currMorale = num(m.get("moraleValue"));
+        double swapSkills = clamp(currSkillsWeight == 0 ? 0
+                : Math.floor(currSkills / currSkillsWeight * swapSkillsWeight), 0, 100);
+        double swapMorale = clamp(currMoraleWeight == 0 ? 0
+                : Math.floor(currMorale / currMoraleWeight * swapMoraleWeight), 0, 100);
+
+        m.put("skillsAdded", jsonNumber(num(m.get("skillsAdded")) + swapSkills - currSkills));
+
+        // one branch keeps the old morale: over 50 already, or the swap would lower it, or
+        // this is a swap-task and the member was evaluated for a different task
+        boolean keepMorale = currMorale > 50 || swapMorale < currMorale
+                || ("swap-task".equals(type) && !eq(m.get("evaluatedFor"), code));
+        if (keepMorale) {
+            swapMorale = currMorale;                        // moraleAdded += 0
+        } else {
+            m.put("moraleAdded", jsonNumber(num(m.get("moraleAdded")) + swapMorale - currMorale));
+        }
+
+        // $res is null in production (see javadoc): only the branch that does not multiply
+        // by $res survives, and it still adds 0 * 0 for the impact term.
+        double efficiencyAdd = 0;
+        if (num(m.get("skillsAdded")) == 0 && num(m.get("moraleAdded")) != 0) {
+            double moraleNow = num(m.get("moraleValue"));
+            dbg(content, str(m.get("staffExp")), "skillsValue:" + numStr(swapSkills)
+                    + ", moralAdd:" + numStr(num(m.get("moraleAdded")))
+                    + ", moraleOld:" + numStr(moraleNow));
+            efficiencyAdd = round(swapSkills * (moraleNow == 0 ? 0
+                    : num(m.get("moraleAdded")) / moraleNow));
+        }
+
+        double efficiencyOld = num(m.get("efficiencyValue"));
+        double swapEfficiency = clamp(num(m.get("skillsAdded")) + num(m.get("moraleAdded"))
+                + efficiencyOld, 0, 100);
+        m.put("efficiencyAdded", jsonNumber(num(m.get("efficiencyAdded"))
+                + swapEfficiency - efficiencyOld));
+        m.put("efficiencyValue", jsonNumber(swapEfficiency));
+        m.put("skillsValue", jsonNumber(swapSkills));
+        m.put("moraleValue", jsonNumber(swapMorale));
+        m.put("added", jsonNumber(num(m.get("skillsAdded")) + num(m.get("moraleAdded"))
+                + num(m.get("efficiencyAdded"))));
+        m.put("addedAvg", jsonNumber(trunc(num(m.get("added")) / 3)));   // intval(), not round()
+
+        return new Swap(matched ? swapTaskName : null, matched ? code : null);
+    }
+
+    /** The two by-reference outputs of cal_swap(): the display name and the task code. */
+    public record Swap(Object taskName, Object taskCode) {
+    }
+
+    /**
+     * recal_eff(): recompute efficiency from the member's task weights.
+     *
+     * `efficiency = round(skills * skillsWeight + morale * moraleWeight)` with NO clamp —
+     * so this is the one place efficiency can exceed 100 and drop below 0. It also appends
+     * a history line with an empty message. `$conn` in the PHP is unused.
+     */
+    public static void recalEff(PhpArray content, int c, Map<String, Map<String, Object>> eff,
+                                Object stepNumber, Object dayNumber, String action) {
+        PhpArray m = memberAt(content, c);
+        if (m == null) return;
+
+        Map<String, Object> weights = eff.get(str(m.get("task")));
+        double skillsWeight = weights == null ? 0 : num(rowGet(weights, "skillsWeight"));
+        double moraleWeight = weights == null ? 0 : num(rowGet(weights, "moraleWeight"));
+        double efficiencyOld = num(m.get("efficiencyValue"));
+
+        m.put("efficiencyValue", jsonNumber(round(num(m.get("skillsValue")) * skillsWeight
+                + num(m.get("moraleValue")) * moraleWeight)));
+        m.put("efficiencyAdded", jsonNumber(num(m.get("efficiencyValue")) - efficiencyOld));
+        m.put("added", jsonNumber(num(m.get("skillsAdded")) + num(m.get("moraleAdded"))
+                + num(m.get("efficiencyAdded"))));
+
+        writeHistory(content, stepNumber, dayNumber, m.get("staffName"), m.get("staffExp"),
+                action, m.get("actionExp"), m.get("skillsAdded"), m.get("moraleAdded"),
+                m.get("efficiencyAdded"), "");
+    }
+
+    // ------------------------------------------------ movement support
+
+    /** PHP round($x, 2) — two decimal places. */
+    private static Object round2(double v) {
+        return jsonNumber(Math.round(v * 100.0) / 100.0);
+    }
+
+    /** PHP intval() — truncate toward zero. */
+    private static double trunc(double v) {
+        return v < 0 ? Math.ceil(v) : Math.floor(v);
+    }
+
+    /** A json_decode'd PHP array, either shape (object -> PhpArray, JSON array -> List). */
+    private static List<Object> seq(Object v) {
+        if (v instanceof PhpArray a) return new ArrayList<>(a.values());
+        if (v instanceof List<?> l) return new ArrayList<>(l);
+        return new ArrayList<>();
+    }
 
     // ------------------------------------------------ impact / affect maths
 
