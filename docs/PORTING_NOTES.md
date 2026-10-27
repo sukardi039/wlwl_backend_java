@@ -875,3 +875,41 @@ Both generations confirm the calendar: `SELECT_STYLE` lands on days
 Both drills also ended the same way — terminal row sharing its predecessor's `dayNumber`
 (2026-08: day 37 with `numberOfDays` 39, `remainingMinutes` `'0:05'`), i.e. written by
 `timeout.php`, not `action.php`.
+
+## 21. drill/ sub-module tally (running state of the port)
+
+`drill/` is one module with an internal switch (`put.php`) plus a `post.php` that ignores
+`mod` entirely. 18 files, 5,617 LOC, but **5 are backups** (`action_saved_20230919`,
+`bossreview_saved_20230919`, `commonLib_20230924`, `commonLib_saved_20230910`,
+`commonLib_saved_20230920_change_In_Skills_Treatment`) — the live surface is **2,798 LOC**.
+
+| unit | PHP LOC | state |
+|---|---:|---|
+| `drill/put.php` switch | 28 | **ported** — falsy/`0` mod emits nothing, unknown mod echoes `No Mod` |
+| `drill/reset.php` | 18 | **ported + tested** |
+| `drill/updatename.php` | 23 | **ported + tested** |
+| `drill/timeout.php` | 50 | **ported + tested** (`DrillTimeoutParityTest`) |
+| `drill/competency.php` | 173 | **ported** — `saveCompetency()` only, `Competency.java` |
+| `drill/commonLib.php` | 775 | **half ported** — 11 of 22 functions in `DrillCommon.java` |
+| `drill/init.php` | 350 | **not ported** — returns 501 |
+| `drill/environment.php` | 232 | **not ported** — returns 501 |
+| `drill/action.php` | 891 | **not ported** — returns 501 |
+| `drill/bossreview.php` | 108 | **not ported** — only reached via `action.php` |
+| `drill/post.php` | 60 | **not ported** — POST verb: `drillcontrol` + `runs` by `QUERY_STRING` as `userId` |
+
+`DrillCommon` present: `writeHistory`, `dbg`, `readParams`, `memberWhere`, `currentMembers`,
+`noMoreStaff`, `initMemberValues`, `highEfficiency`, `lowEfficiency`, `highMorale`,
+`lowMorale` (plus helpers `truthy`, `named`, `isStrictlyZero`, `extreme`, `Pick`).
+
+`DrillCommon` missing, in dependency order for INIT/ENVIRONMENT/ACTION:
+`init_staff_ana`, `ana_action`, `ana_style`, `cal_affect`, `cal_impacts`, `cal_swap`,
+`cal_works`, `recal_eff`, `setEnvironment`, `weekSummary`, `writeSummary`.
+
+Unported branches answer **501 with the mod name in the body**, deliberately: a silent
+`No Mod` or an empty 200 would let an unported branch look like a working one.
+
+Sample data: the two real dumps in `/opt/data/pastes/paste_3_033955.txt` and
+`paste_4_051615.txt` (drillDetailId, drillId, stepNumber, dayNumber, action, content …)
+are **not** RFC-quoted CSV — `content` is a raw JSON blob containing commas and quotes.
+Parse with `json.JSONDecoder().raw_decode` at the `{` after the `action` field, not
+`csv.reader`. `/opt/data/samples/shape_report.py` does this.

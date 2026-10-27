@@ -9,13 +9,13 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 1 blocked (`drill`, in progress). See `../wlwl_parity_ledger.md` |
+| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 1 in progress (`drill`: 3 of 6 mods + `post.php` outstanding, see `docs/PORTING_NOTES.md` §21) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **166 passing** (`mvn test`) |
+| Tests | **185 passing** (`mvn test`, 21 test classes) |
 
 Not yet ported, and why:
 
@@ -32,7 +32,7 @@ Requires JDK 21 and Maven. A local toolchain was used during development at
 `/opt/data/toolchain` — `. /opt/data/toolchain/env.sh` if you are on that box.
 
 ```bash
-mvn test          # 10 parity tests, H2 in-memory, no database needed
+mvn test          # full parity suite, H2 in-memory, no database needed
 mvn package       # produces target/wlwl-backend-0.1.0-SNAPSHOT.jar
 ```
 
