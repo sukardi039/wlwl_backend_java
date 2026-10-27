@@ -517,3 +517,60 @@ need changing before the port runs against H2 or a strict SQL mode:
 
 Also note the tables are **utf8mb3**, not utf8mb4, and `restsession.usedOn` really is
 `varchar(100)` (the PHP stores a datetime string plus microseconds there).
+
+## 15. The last tier (license, packageremove, controldrill, registerdemo, simulator, consoleuser)
+
+**15.1 `license`** filters with an OR, not an AND:
+`where batchId = '<mod>' or packageId = '<mod>'`. One endpoint therefore answers both
+"licences in this batch" and "licences for this customer", distinguished only by what
+the caller passes.
+
+**15.2 `packageremove` answers 204 unconditionally**, even when the DELETE fails — the
+PHP never inspects the mysqli result. The port catches and logs the exception instead
+of letting it become a 500, because a 500 here would break a fire-and-forget call.
+
+**15.3 `controldrill` is the third meaning of `mod`.** `$act = array('active',
+'activeOne', 'activeTwo', 'activeThree')` and `UPDATE company set $act[$mod] = 1`.
+An out-of-range index makes the statement `UPDATE company set = 1`, an SQL error, so
+mod >= 4 is a 500 — reproduced by throwing at that point.
+
+`mod == 0` additionally re-pushes the company password:
+
+```php
+UPDATE backenduser set loginPassword = password('<commonPW>')
+ where companyName = '<packageId>' and instructor = 0
+```
+
+That is the mechanism behind §9.1. The `and instructor = 0` MUST stay: without it,
+instructors lose their personal passwords. It runs once per company row, inside the
+fetch loop. Tested by asserting a non-instructor's hash is replaced with
+`PASSWORD(commonPW)` while an instructor's is untouched.
+
+**15.4 `registerdemo` is on the PUBLIC surface and dispatches on the HTTP verb only.**
+Its `index.php` never includes `restdx.inc`, so the body's `method` field is ignored
+(new `ModuleHandler.ignoresBodyMethod()` capability flag), and anything but PUT answers
+the literal `No method specified!`. Flow: blank companyName becomes `'admin'`; a
+taken `loginName` (for a different userId) is 406; no licence seat is 405; then insert
+(`uniqid()` id, `PASSWORD()` hash) or update — and the UPDATE deliberately does NOT
+write `loginPassword`.
+
+**15.5 `simulator` has two shapes.** POST always returns an ARRAY, even with a query
+string present (it appends unconditionally, so there is no object switch) — the only
+module like that besides `consoleuser`. PUT's initialisation branch uses `rand($min,
+$max)`, which is INCLUSIVE at both ends, so those values are asserted by range, not by
+value; the action branch is deterministic and asserted exactly. `$qdata->skillsValue
+=== -1` is a STRICT comparison, so only a real numeric -1 triggers the roll.
+
+**15.6 `consoleuser` is the only report that keeps `drill.startOn is not null`.** The
+three other drill reports have that predicate commented out. It also returns the whole
+`drilldetail` row with `content` re-encoded — a pure round-trip through assoc-mode
+decode, which is why it could be ported without knowing the blob's internal keys.
+
+### Test-fixture traps found here
+
+- Two Spring contexts (one plain, one with MockMvc) share the same in-memory H2
+  database because of `DB_CLOSE_DELAY=-1`. The second init re-runs the schema, so every
+  view must be dropped BEFORE the tables it references, or `drop table staff` fails
+  with a dependency error. `schema-test.sql` now drops the simulator views first.
+- `assertThat(intValue).isEqualTo(Math.round(...))` compiles but always fails:
+  `Math.round` returns a long, and `Integer.equals(Long)` is false. Cast to int.

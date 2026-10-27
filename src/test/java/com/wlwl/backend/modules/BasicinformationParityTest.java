@@ -74,12 +74,14 @@ class BasicinformationParityTest {
     @Test
     @DisplayName("missing profile class -> JSON null for efficiencyExp (PHP has no isset guard)")
     void staffExpansionNulls() throws Exception {
-        call().andExpect(jsonPath("$.staff_det.staff.S1.skillsExp").value("Low"))
-                .andExpect(jsonPath("$.staff_det.staff.S1.moraleExp").value("Medium"))
-                .andExpect(jsonPath("$.staff_det.staff.S1.efficiencyExp").doesNotExist())
+        // staffId is a bigint in production, so the key is numeric (PHP emits an object
+        // because the int keys are not a 0-based sequence).
+        call().andExpect(jsonPath("$.staff_det.staff['1'].skillsExp").value("Low"))
+                .andExpect(jsonPath("$.staff_det.staff['1'].moraleExp").value("Medium"))
+                .andExpect(jsonPath("$.staff_det.staff['1'].efficiencyExp").doesNotExist())
                 // the key exists with a null value; JSON null is not "absent"
-                .andExpect(jsonPath("$.staff_det.staff.S1.efficiencyExp").hasJsonPath())
-                .andExpect(jsonPath("$.staff_ref.staff.Alice").value("S1"));
+                .andExpect(jsonPath("$.staff_det.staff['1'].efficiencyExp").hasJsonPath())
+                .andExpect(jsonPath("$.staff_ref.staff.Alice").value(1));
     }
 
     @Test

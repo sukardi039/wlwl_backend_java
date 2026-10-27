@@ -9,17 +9,22 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **23 of 33** (see `../wlwl_parity_ledger.md`) |
+| Modules ported | **29 of 33** (see `../wlwl_parity_ledger.md`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **143 passing** (`mvn test`) |
+| Tests | **162 passing** (`mvn test`) |
 
-Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`signin`, `registerdemo`, `simulator`, `controldrill`, `drillcompare`, `messages`,
-`consoleuser`, `license`, `packageremove`.
+Not yet ported, and why:
+
+| module | status |
+|---|---|
+| `drill` (5,617 LOC) | **blocked** — needs real `drilldetail.content` sample rows |
+| `drillcompare` (56) | **blocked** — reads `content.current.teamAvg.efficiency` |
+| `signin` (144) | **dead** — `wxuser`, `studentlist`, `tasks` do not exist in production |
+| `messages` (51) | **dead** — `smshead_view`, `smslist_view`, `StudentList` do not exist |
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -87,6 +92,9 @@ service/
   ProfileSeeder.java      the 3-way profile combination seeding
   ProfileExpansion.java   code -> display name / display key maps
 modules/
+  LicenseModule / PackageremoveModule / ControldrillModule / RegisterdemoModule
+  SimulatorModule.java     what-if stepper (rand-based init, deterministic deltas)
+  ConsoleuserModule.java   raw latest-step feed
   AbstractCatalogueModule.java  shared list/upsert/re-read shape
   EnvironmentalModule / TemplateModule / ProductModule / StyleModule / TaskModule
   AgentModule / LicensebatchModule / PackageModule

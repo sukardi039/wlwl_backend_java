@@ -138,6 +138,11 @@ public class BackendGateway {
             if (fromQuery != null) return fromQuery.trim().toUpperCase(Locale.ROOT);
             return request.getMethod().toUpperCase(Locale.ROOT);
         }
+        // registerdemo/ and signin/: switch(strtoupper($_SERVER['REQUEST_METHOD']))
+        // with no restdx.inc, so the body's method field is never consulted.
+        if (handler.ignoresBodyMethod()) {
+            return request.getMethod().toUpperCase(Locale.ROOT);
+        }
         if (envelope != null) {
             JsonNode m = envelope.get("method");
             if (m != null && !m.isNull() && !m.asText().isEmpty()) {

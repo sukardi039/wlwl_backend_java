@@ -6,6 +6,12 @@ drop view  if exists agentlicense_view;
 -- drop views before the tables they read, or the table drops fail on a reused DB
 drop view  if exists license_view;
 drop view  if exists batchlicense_view;
+-- the simulator slice creates these; they must go before `drop table staff` below,
+-- because two Spring contexts can share the same in-memory database (DB_CLOSE_DELAY=-1)
+-- and H2 refuses to drop a table that a surviving view references.
+drop view  if exists staffprofile_view;
+drop view  if exists impactprofile_view;
+drop table if exists simulator;
 drop table if exists baseinfo;
 drop table if exists baseclass;
 drop table if exists restsession;
@@ -101,6 +107,9 @@ values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', '2099-12-31'),
        -- seat -> 405. active = 2 keeps it out of basicinformation's "active < 2" list.
        ('pkg5', 'NoAgent', 'zz', 2, '2020-01-01', '123456', '2099-12-31');
 
+-- pkg1 runs model M1 in its first slot, so controldrill/ can resolve runOneName.
+update company set runOne = 'M1' where packageId = 'pkg1';
+
 -- ---------------------------------------------------------------- lookups
 
 create table baseclass (
@@ -122,27 +131,44 @@ create table profileclass (
   profileClassMax         int default 0
 );
 
-insert into profileclass (profileClassCode, profileClassDisplayName, profileName) values
-  ('P1', 'Low',    'skills'),
-  ('P2', 'Medium', 'morale'),
+-- Min/Max are the ranges the simulator rolls against (staffprofile_view exposes them)
+insert into profileclass (profileClassCode, profileClassDisplayName, profileName,
+                          profileClassMin, profileClassMax) values
+  ('P1', 'Low',    'skills',      10,  90),
+  ('P2', 'Medium', 'morale',      20,  80),
   -- two classes per profile => the seeding triple loop produces 2x2x2 = 8 rows
-  ('P3', 'High',   'efficiency'),
-  ('P4', 'High',   'skills'),
-  ('P5', 'Low',    'morale'),
-  ('P6', 'Low',    'efficiency');
+  ('P3', 'High',   'efficiency',  30, 100),
+  ('P4', 'High',   'skills',      40,  95),
+  ('P5', 'Low',    'morale',       5,  50),
+  ('P6', 'Low',    'efficiency',   0,  40);
 
 -- skillsProfile points at a real class; moraleProfile does NOT (proves the
 -- unguarded $exp[...] lookup emits JSON null for a missing code).
+-- staffId is a bigint AUTO_INCREMENT in production (the fixture used to pretend it was
+-- a string). S1 keeps an UNKNOWN efficiency profile on purpose: staffprofile_view
+-- INNER-joins all three profile classes, so that row must disappear from the view.
 create table staff (
-  staffId           varchar(100) not null primary key,
-  staffName         varchar(100) not null,
-  skillsProfile     varchar(100) default null,
-  moraleProfile     varchar(100) default null,
-  efficiencyProfile varchar(100) default null
+  staffId              int not null auto_increment primary key,
+  staffName            varchar(100) not null,
+  staffPhoto           varchar(255) default null,
+  skillsProfile        varchar(100) not null,
+  moraleProfile        varchar(100) not null,
+  efficiencyProfile    varchar(100) not null,
+  skillsValue          int default 0,
+  moraleValue          int default 0,
+  efficiencyValue      int default 0,
+  staffDescription     text,
+  staffSelfIntroduction text,
+  staffInterview       text,
+  yearsWorked          int default 0,
+  experience           int default 0,
+  newComer             int default 0,
+  oldTimer             int default 0
 );
-
-insert into staff (staffId, staffName, skillsProfile, moraleProfile, efficiencyProfile) values
-  ('S1', 'Alice', 'P1', 'P2', 'NOPE');
+insert into staff (staffId, staffName, skillsProfile, moraleProfile, efficiencyProfile,
+                   skillsValue, moraleValue, efficiencyValue) values
+  (1, 'Alice', 'P1', 'P2', 'NOPE', 70, 60, 50),
+  (2, 'Bob',   'P1', 'P2', 'P3',   90, 70, 60);
 
 create table lang (langCode varchar(20) not null primary key);
 insert into lang (langCode) values ('en'), ('id');
@@ -419,6 +445,7 @@ drop table if exists profilesens;
 create table profileimpact (
   profileImpactKey   int not null auto_increment primary key,
   impactClass        varchar(100) default null,
+  desiredStyle       varchar(100) default null,
   skillsClass        varchar(100) default null,
   moraleClass        varchar(100) default null,
   efficiencyClass    varchar(100) default null,
@@ -429,7 +456,8 @@ create table profileimpact (
   skillsAffect       decimal(6,2) default 0.00,
   moraleAffect       decimal(6,2) default 0.00,
   efficiencyAffect   decimal(6,2) default 0.00,
-  affectMsg          varchar(500) default null
+  affectMsg          varchar(500) default null,
+  bossMsg            varchar(500) default null
 );
 
 create table profilesens (

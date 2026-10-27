@@ -24,6 +24,13 @@ public interface ModuleHandler {
      */
     default boolean allowsQueryStringMethodOverride() { return false; }
 
+    /**
+     * True for modules whose index.php switches on the HTTP verb ONLY and does not
+     * include restdx.inc: registerdemo/ and signin/. The body's "method" field is
+     * ignored there (they never read it), unlike every restdx module.
+     */
+    default boolean ignoresBodyMethod() { return false; }
+
     default void onGet(RpcContext ctx) throws Exception { }
 
     default void onPost(RpcContext ctx) throws Exception { }
