@@ -119,6 +119,118 @@ public final class DrillCommon {
         return params;
     }
 
+    /** currentMembers(): how many slots hold a name. */
+    public static int currentMembers(PhpArray content) {
+        int maxMembers = (int) PhpJson.num(PhpJson.path(content, "control", "maxMembers"));
+        PhpArray members = content.child("members");
+        int v = 0;
+        for (int c = 1; c <= maxMembers; c++) {
+            if (named(members, c)) v++;
+        }
+        return v;
+    }
+
+    /** anyOne(): a RANDOM named member. rand() is inclusive, so the range is 1..count. */
+    public static Pick anyOne(PhpArray content, java.util.Random rnd) {
+        int maxMembers = (int) PhpJson.num(PhpJson.path(content, "control", "maxMembers"));
+        PhpArray members = content.child("members");
+        int count = currentMembers(content);
+        if (count <= 0) return new Pick(null, null);
+
+        int v = 1 + rnd.nextInt(count);                     // PHP rand(1, count)
+        while (!named(members, v) && v < maxMembers) v++;   // PHP: staffName < 1 && v < max
+        PhpArray m = member(members, v);
+        return m == null ? new Pick(null, null) : new Pick(m.get("staffName"), m.get("staffExp"));
+    }
+
+    /** lowMorale(): the member with the lowest moraleValue that still has a name. */
+    public static Pick lowMorale(PhpArray content) {
+        return extreme(content, "moraleValue", true);
+    }
+
+    /** lowEfficiency(): lowest efficiencyValue. */
+    public static Pick lowEfficiency(PhpArray content) {
+        return extreme(content, "efficiencyValue", true);
+    }
+
+    /** highEfficiency(): highest efficiencyValue. */
+    public static Pick highEfficiency(PhpArray content) {
+        return extreme(content, "efficiencyValue", false);
+    }
+
+    /**
+     * Shared body of lowMorale / lowEfficiency / highEfficiency — they differ only in which
+     * field they read and the direction of the comparison.
+     *
+     * The PHP opens with `while ($members[$sv]['staffName'] < 1) $sv++;` and NO bound, so an
+     * all-empty team would spin forever reading undefined keys. Here the scan stops at
+     * maxMembers+1 and returns an empty Pick; a hang is not a behaviour worth reproducing.
+     */
+    private static Pick extreme(PhpArray content, String field, boolean lowest) {
+        int maxMembers = (int) PhpJson.num(PhpJson.path(content, "control", "maxMembers"));
+        PhpArray members = content.child("members");
+
+        int sv = 1;
+        while (sv <= maxMembers + 1 && !named(members, sv)) sv++;
+        if (sv > maxMembers) return new Pick(null, null);
+
+        PhpArray first = member(members, sv);
+        Object bestName = first.get("staffName");
+        Object bestExp = first.get("staffExp");
+        double best = PhpJson.num(first.get(field));
+
+        for (int v = sv + 1; v <= maxMembers; v++) {
+            if (!named(members, v)) continue;
+            PhpArray m = member(members, v);
+            double val = PhpJson.num(m.get(field));
+            // strict < / > : PHP never replaces on an equal value, so the FIRST one wins ties
+            if (lowest ? val < best : val > best) {
+                bestName = m.get("staffName");
+                bestExp = m.get("staffExp");
+                best = val;
+            }
+        }
+        return new Pick(bestName, bestExp);
+    }
+
+    /** memberWhere(): the slot holding this name, or -1. */
+    public static int memberWhere(PhpArray content, Object staffName) {
+        int maxMembers = (int) PhpJson.num(PhpJson.path(content, "control", "maxMembers"));
+        PhpArray members = content.child("members");
+        String wanted = staffName == null ? "" : staffName.toString();
+        for (int c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(members, c);
+            if (m == null) continue;
+            Object name = m.get("staffName");
+            if (name != null && wanted.equals(name.toString())) return c;
+        }
+        return -1;
+    }
+
+    /** A member plus the staffExp that travels with it (PHP returns one and passes the other by reference). */
+    public record Pick(Object name, Object exp) {
+    }
+
+    /**
+     * PHP compares `staffName > 0`. On PHP 5.x a non-numeric name casts to 0 and this would be
+     * FALSE for every member; on PHP 7+/8 it is a string comparison against "0". The app runs
+     * PHP 7+, where a real name is greater and an empty string is not - so "has a name" is the
+     * faithful reading, and "0" is excluded because "0" > "0" is false.
+     */
+    private static boolean named(PhpArray members, int c) {
+        PhpArray m = member(members, c);
+        if (m == null) return false;
+        Object name = m.get("staffName");
+        if (name == null) return false;
+        String s = name.toString();
+        return !s.isEmpty() && !"0".equals(s);
+    }
+
+    private static PhpArray member(PhpArray members, int c) {
+        Object v = members.get(c);
+        return v instanceof PhpArray a ? a : null;
+    }
+
     // ------------------------------------------------------------- helpers
 
     /** PHP truthiness for the values that reach these functions. */

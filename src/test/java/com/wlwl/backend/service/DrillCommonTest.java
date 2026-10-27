@@ -112,4 +112,74 @@ class DrillCommonTest {
         DrillCommon.dbg(c, "No More Staff", true);
         assertThat(c.toJsonNode().toString()).contains("No More Staff: true");
     }
+
+    /** 3 slots, two of them named. */
+    private static PhpArray team() {
+        PhpArray c = content(3);
+        PhpArray ms = c.child("members");
+        ms.child(1).put("staffName", "Ana");
+        ms.child(1).put("staffExp", "e1");
+        ms.child(1).put("moraleValue", 70);
+        ms.child(1).put("efficiencyValue", 50);
+        ms.child(2).put("staffName", "");
+        ms.child(3).put("staffName", "Budi");
+        ms.child(3).put("staffExp", "e3");
+        ms.child(3).put("moraleValue", 30);
+        ms.child(3).put("efficiencyValue", 90);
+        return c;
+    }
+
+    @Test
+    @DisplayName("currentMembers counts only slots holding a name")
+    void currentMembers() {
+        assertThat(DrillCommon.currentMembers(team())).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("lowMorale picks the lowest; ties keep the FIRST member")
+    void lowMorale() {
+        PhpArray t = team();
+        DrillCommon.Pick p = DrillCommon.lowMorale(t);
+        assertThat(p.name()).isEqualTo("Budi");
+        assertThat(p.exp()).isEqualTo("e3");
+
+        // equal morale -> strict < means the earlier member is kept
+        PhpArray tie = team();
+        ((PhpArray) tie.child("members").get(1)).put("moraleValue", 30);
+        assertThat(DrillCommon.lowMorale(tie).name()).isEqualTo("Ana");
+    }
+
+    @Test
+    @DisplayName("highEfficiency picks the highest, lowEfficiency the lowest")
+    void efficiencyExtremes() {
+        assertThat(DrillCommon.highEfficiency(team()).name()).isEqualTo("Budi");
+        assertThat(DrillCommon.lowEfficiency(team()).name()).isEqualTo("Ana");
+    }
+
+    @Test
+    @DisplayName("memberWhere maps a name to its slot, or -1")
+    void memberWhere() {
+        assertThat(DrillCommon.memberWhere(team(), "Budi")).isEqualTo(3);
+        assertThat(DrillCommon.memberWhere(team(), "Nobody")).isEqualTo(-1);
+    }
+
+    @Test
+    @DisplayName("anyOne always returns a named member")
+    void anyOne() {
+        PhpArray t = team();
+        java.util.Random rnd = new java.util.Random(42);
+        for (int i = 0; i < 50; i++) {
+            DrillCommon.Pick p = DrillCommon.anyOne(t, rnd);
+            assertThat(p.name()).isIn("Ana", "Budi");
+        }
+    }
+
+    @Test
+    @DisplayName("an empty team does not hang the extremes (PHP would spin)")
+    void emptyTeamExtremes() {
+        PhpArray empty = content(3);
+        empty.child("members").child(1).put("staffName", "");
+        assertThat(DrillCommon.lowMorale(empty).name()).isNull();
+        assertThat(DrillCommon.anyOne(empty, new java.util.Random(1)).name()).isNull();
+    }
 }
