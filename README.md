@@ -9,16 +9,16 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **8 of 33** (`drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **9 of 33** (`model`, `drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **98 passing** (`mvn test`) |
+| Tests | **107 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`model`, `signin`, `drillcompare` and 22 others.
+`signin`, `drillcompare`, `profileaffect` and 20 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -84,6 +84,7 @@ db/
 service/
   LicenseAssignment.java  seat allocation shared with registerdemo/
 modules/
+  ModelModule.java         port of model/ (get/post/put)
   DrilloverviewModule.java port of drilloverview/ (scoreboard + ranking)
   DrilleffectiveModule.java port of drilleffective/ (per-action percentages)
   DrillcapableModule.java  port of drillcapable/ (competency scoreboard)

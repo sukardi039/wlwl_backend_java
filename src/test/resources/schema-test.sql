@@ -143,9 +143,14 @@ insert into product (productId, productName, productShortName) values
 
 create table template (
   templateName        varchar(100) not null primary key,
-  templateDescription varchar(200) default null
+  templateDescription varchar(200) default null,
+  -- the model module sizes its staff/environment/recruit arrays from these
+  numberOfStaff     int default 0,
+  environmentEvents int default 0,
+  recruits          int default 0
 );
-insert into template (templateName, templateDescription) values ('BasicTpl', 'A basic template');
+insert into template (templateName, templateDescription, numberOfStaff, environmentEvents, recruits)
+values ('BasicTpl', 'A basic template', 2, 1, 1);
 
 create table task (taskName varchar(100) not null primary key);
 insert into task (taskName) values ('Inspect');
@@ -191,10 +196,14 @@ create table model (
   modelId       varchar(100) not null primary key,
   modelName     varchar(100) not null,
   modelTemplate varchar(100) not null,
-  modelContent  varchar(2000) default null
+  modelProduct  varchar(100) default null,
+  modelContent  varchar(4000) default null
 );
-insert into model (modelId, modelName, modelTemplate, modelContent) values
-  ('M1', 'Model One', 'BasicTpl', '{"nodes":[1,2],"label":"x"}');
+-- M1 has ONE staff entry but the template wants TWO, one environment (matching)
+-- and one recruit (matching) — so only the staff list gets padded by the repair.
+insert into model (modelId, modelName, modelTemplate, modelProduct, modelContent) values
+  ('M1', 'Model One', 'BasicTpl', 'W1',
+   '{"nodes":[1,2],"label":"x","staffs":[{"staffName":"A","task":"t","staffExp":"e","taskExp":"x"}],"environments":[{"environmentName":"Off","environmentExp":"ee"}],"recruits":[{"staffName":"R","staffExp":"re"}]}');
 
 -- `key` is a reserved word in MySQL and H2 alike; quoted so the DDL is accepted
 -- while the column label still comes back as `key`.

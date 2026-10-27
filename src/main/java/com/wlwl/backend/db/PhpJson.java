@@ -46,6 +46,24 @@ public final class PhpJson {
         }
     }
 
+    /**
+     * json_decode($raw) with NO second argument — object mode.
+     *
+     * JSON objects stay objects here, so {@code {}} must survive as {@code {}} and
+     * {@code {"0":"a"}} must stay an object. Returns the raw Jackson tree, which has
+     * exactly those semantics.
+     */
+    public static JsonNode decodeObject(ObjectMapper mapper, Object raw) {
+        if (raw == null) return null;
+        String s = raw.toString();
+        if (s.isEmpty()) return null;
+        try {
+            return mapper.readTree(s);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** JsonNode -> PHP value: objects become PhpArray (with key coercion), arrays Lists. */
     public static Object fromJson(JsonNode n) {
         if (n == null || n.isNull()) return null;

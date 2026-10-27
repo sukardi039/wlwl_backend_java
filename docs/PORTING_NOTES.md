@@ -343,3 +343,37 @@ table rendering.
 `buildFooter` also runs when the loop found nothing, which is why the port must not
 short-circuit before calling it — the 204 path discards the result, but the control
 flow has to match.
+
+## 11. model/: three PHP bugs that are part of the contract
+
+`model` resizes a JSON document's arrays to match counts declared on the template row.
+The repair pass contains three defects that a "clean" rewrite would silently fix, and
+each changes output.
+
+**11.1 `!==` on a value that is always a string.** The staff check is
+`$row['numberOfStaff'] !== count($row['modelContent']->staffs)`. mysqli returns numeric
+columns as STRINGS, and `count()` returns an int, so `'2' !== 2` is **always** true and
+the staff list is rebuilt on every row, even when already the right size. The
+environment and recruit checks use loose `!=`, so those rebuild only on a real
+mismatch. Reproduced: `staffs` always rebuilt, the other two only when counts differ.
+
+**11.2 `$rov` is never reset between rows.** The rebuild appends its padding to a
+scratch array that lives for the whole request, so a second model inherits the first
+model's padding and is then partially overwritten:
+
+```php
+for ($c=0; $c<$row['numberOfStaff']; $c++) { $rov['staffs'][] = $staffRec; }  // grows
+for ($c=0; $c<min($n, count($existing)); $c++) { $rov['staffs'][$c] = $existing[$c]; }
+```
+
+With one model per template this is invisible; with two it produces arrays longer than
+the template count. The port shares a single `rov` across the loop to match.
+
+**11.3 A zero-size rebuild stores NULL, not `[]`.** If the wanted count is 0 and the
+blob has no such key, the append loop never runs, `$rov['staffs']` is undefined, and
+the assignment stores null. The key appears as `null` in the JSON, not `[]`.
+
+Also note: `modelContent` must arrive as JSON **text**. If the client sends an object,
+PHP interpolates a stdClass into SQL and fatals; the port throws so the gateway returns
+500 for the same reason. And `put.php` decodes but does NOT run the repair pass — only
+`post.php` repairs.
