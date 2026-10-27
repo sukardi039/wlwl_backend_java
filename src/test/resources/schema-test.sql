@@ -314,3 +314,53 @@ insert into license (licenseId, agentId, availableFrom, availableTill, userId, p
 -- a live session for the GET lookup path; the query string is the sessionId
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
 values ('sess1', 'U1', 'RK1', '2026-01-01 00:00:00', null, null);
+
+-- ---------------------------------------------------------- drilloverview
+
+drop table if exists drilldetail;
+drop table if exists drill;
+drop table if exists drillcontrol;
+
+create table drillcontrol (
+  drillControlId varchar(45)  not null primary key,
+  userId         varchar(100) not null
+);
+
+create table drill (
+  drillId        varchar(45) not null primary key,
+  drillControlId varchar(45) not null,
+  seq            int default null,
+  drillStatus    varchar(45) default null,
+  startOn        datetime default null
+);
+
+-- drilldetail.content is the JSON blob the drill engine writes; longtext in MySQL.
+create table drilldetail (
+  drilldetailId varchar(45) not null primary key,
+  drillId       varchar(45) not null,
+  stepNumber    int not null,
+  dayNumber     int default 0,
+  content       longtext
+);
+
+insert into drillcontrol (drillControlId, userId) values
+  ('DC1', 'U1'),   -- Alice
+  ('DC2', 'U2'),   -- Bob
+  ('DC3', 'U6');   -- Boom: no drilldetail rows -> blank record
+
+insert into drill (drillId, drillControlId, seq, drillStatus, startOn) values
+  ('D1', 'DC1', 1, 'active',    '2026-01-01 08:00:00'),
+  ('D2', 'DC2', 1, 'active',    '2026-01-01 08:00:00'),
+  ('D3', 'DC3', 2, 'notStarted','2026-01-02 08:00:00');
+
+-- D1: sales 5*100 = 500, skills 70 vs 50 (+20, +40.0%), day 3 of 10 -> daysLeft 7
+-- D2: sales 9*100 = 900, skills 90 vs 50 (+40, +80.0%), day 2 of 8  -> daysLeft 6
+--      -> Bob must rank 1, Alice rank 2.
+-- D1 also has an EARLIER step (1) which must be ignored: only max(stepNumber) counts.
+insert into drilldetail (drilldetailId, drillId, stepNumber, dayNumber, content) values
+  ('DD1a', 'D1', 1, 1,
+   '{"control":{"status":"old","numberOfDays":10,"remainingMinutes":999},"orderStatus":{"ordersCompleted":0},"orderValue":100,"current":{"teamAvg":{"skills":10,"morale":10,"efficiency":10}},"summary":[{"teamAvg":{"skills":10,"morale":10,"efficiency":10}}]}'),
+  ('DD1b', 'D1', 2, 3,
+   '{"control":{"status":"running","numberOfDays":10,"remainingMinutes":120},"orderStatus":{"ordersCompleted":5},"orderValue":100,"current":{"teamAvg":{"skills":70,"morale":60,"efficiency":50}},"summary":[{"teamAvg":{"skills":50,"morale":50,"efficiency":40}}],"competency":{"skillsCompetency":80,"moraleCompetency":70,"efficiencyCompetency":60,"leaderShipCompetency":50,"driveCompetency":40,"totalCompetency":300},"analysis":{"action":[{"oneInFour":0,"count":4,"positive":2,"name":"salesAction"},{"oneInFour":1,"count":2,"positive":1,"name":"coachAction"}]}}'),
+  ('DD2', 'D2', 1, 2,
+   '{"control":{"status":"running","numberOfDays":8,"remainingMinutes":45},"orderStatus":{"ordersCompleted":9},"orderValue":100,"current":{"teamAvg":{"skills":90,"morale":70,"efficiency":60}},"summary":[{"teamAvg":{"skills":50,"morale":50,"efficiency":40}}],"competency":{"skillsCompetency":70,"moraleCompetency":60,"efficiencyCompetency":50,"leaderShipCompetency":40,"driveCompetency":30,"totalCompetency":250},"analysis":{"action":[{"oneInFour":0,"count":4,"positive":4,"name":"salesAction"},{"oneInFour":1,"count":0,"positive":0,"name":"coachAction"}]}}');

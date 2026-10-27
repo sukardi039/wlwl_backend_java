@@ -9,16 +9,16 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **5 of 33** (`backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **8 of 33** (`drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **80 passing** (`mvn test`) |
+| Tests | **98 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`drilloverview`, `drilleffective`, and 27 others.
+`model`, `signin`, `drillcompare` and 22 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -84,6 +84,9 @@ db/
 service/
   LicenseAssignment.java  seat allocation shared with registerdemo/
 modules/
+  DrilloverviewModule.java port of drilloverview/ (scoreboard + ranking)
+  DrilleffectiveModule.java port of drilleffective/ (per-action percentages)
+  DrillcapableModule.java  port of drillcapable/ (competency scoreboard)
   BackenduserModule.java  port of backenduser/ (list users, create/update)
   StaffsigninModule.java  port of staffsignin/ (login, session, GETAUTH/CHKAUTH)
   BasicinformationModule.java  port of basicinformation/post.php (18 sections)

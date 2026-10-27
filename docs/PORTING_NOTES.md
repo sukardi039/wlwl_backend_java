@@ -290,3 +290,56 @@ real `license.agentId` must be nullable, and why such rows never appear in
 One ordering trap: the PHP assigns `$qdata->userId = uniqid()` **before** calling
 `update_license`, so the newly minted id is what lands on the licence row. Passing
 the pre-assignment (empty) id silently attaches licences to user `""`.
+
+## 10. The drill report family (drilloverview / drilleffective / drillcapable)
+
+Three modules share one query shape and one detail-row source, but each renders it
+differently. All three read `drill` joined to `drillcontrol` and `backenduser`, then
+for each drill read **only the latest step**:
+
+```sql
+select *, '<drillControlId>' as drillControlId from drilldetail
+where drillId = ? and stepNumber = (select max(stepNumber) from drilldetail where drillId = ?)
+```
+
+**10.1 `json_decode($x, true)` — assoc mode, and it changes the output.** These
+modules decode `drilldetail.content` with `true` (basicinformation used the object
+mode). In assoc mode a JSON object becomes a PHP array, so `{"0":"a","1":"b"}`
+re-encodes as `["a","b"]` and `{}` becomes `[]`. `db/PhpJson.decodeAssoc` returns
+`PhpArray`/`List` for exactly this reason — feeding a Jackson tree straight to the
+response would emit `{"0":"a","1":"b"}` and silently differ.
+
+**10.2 The `wlwl.` database qualifier is dropped.** The PHP says
+`from wlwl.backenduser`. The JDBC connection's catalog is that same database, so the
+result is identical — and dropping it is what lets the service point at a renamed
+database at cutover. Recorded as a deliberate divergence.
+
+**10.3 `ORDER BY` is qualified to `drill.*`.** MySQL resolves unqualified ORDER BY
+names against the SELECT list first, and the select list is `drill.*`, so
+`order by drillControlId, seq` means drill's columns. Writing it explicitly is the
+same column and avoids ambiguity errors on other engines.
+
+**10.4 Blank records are not counted.** A drill with no `drilldetail` row appends a
+blank record (all zeros, status from `drill.drillStatus`) but does **not** increment
+`$count`. If that is the only drill, `$count` stays 0 and the response is 204 — the
+blank record is discarded. When other drills do produce rows, the blank record rides
+along and keeps whatever rank it was given (usually 0), because the re-rank only runs
+for drills that had detail rows.
+
+**10.5 Per-module oddities.**
+
+| module | notable |
+|---|---|
+| `drilloverview` | Ranks by `sales` DESC; on a tie, `teamEff` **ascending** (lower efficiency first). Ranking runs after *every* drill, so only the last pass is observable. |
+| `drillcapable` | Ranks by `totalCompetency` DESC, NULLs last. The comparator never returns 0, so it is not a valid ordering — reproduced element-wise rather than "cleaned up". |
+| `drilleffective` | Header is built from the first row's `analysis.action[]` (oneInFour==1 group first). **Nothing is sorted or ranked** — those blocks are commented out — so rows keep join order and there is no `rank` key. `round()` output stays a FLOAT, so JSON shows `50.0`, not `50`. |
+
+**10.6 `drilleffective` appends its footer into `detail`.** `buildFooter()` runs
+after the loop and does `$detail[] = $totals`, so the response carries one more detail
+row than there are drills, and that last row's `userName` is `""`. It also emits the
+running totals as a top-level `fb` object. Both are load-bearing for the client's
+table rendering.
+
+`buildFooter` also runs when the loop found nothing, which is why the port must not
+short-circuit before calling it — the 204 path discards the result, but the control
+flow has to match.
