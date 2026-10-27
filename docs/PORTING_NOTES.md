@@ -1231,7 +1231,7 @@ as a sequence of independent passes over the member list, so it ports in this or
 | # | block | lines | state |
 |---|---|---|---|
 | 1 | `actionType == 'recruits'` — move actioned recruits into free slots | 77–124 | **ported** (`DrillAction.applyRecruits` + `DrillRecruitMathTest`) |
-| 2 | `swapTask` — pairwise task swap between actioned members | 126–176 | not ported |
+| 2 | `swapTask` — pairwise task swap between actioned members | 126–176 | **ported** (`DrillAction.applySwapTask` + `DrillSwapTaskTest`) |
 | 3 | `used.actions[parentAction]++`, then the per-member impact loop (`cal_impacts` / `cal_affect`, `recal_eff`, `cal_works`, history) | 179–~500 | not ported |
 | 4 | meet-the-boss / order-stage progression and `setEnvironment` triggers | ~500–700 | not ported |
 | 5 | `writeSummary` leftovers before the shared tail at 739 | ~700–738 | not ported |

@@ -276,6 +276,72 @@ public final class DrillAction {
     }
 
 
+
+    /**
+     * case "MORE_ACTIONS", the `if ($action['swapTask'])` block: pairwise task swapping
+     * between the members who acted.
+     *
+     * The first acting member's task is remembered, then for every FURTHER acting member the
+     * two swap: their `action` fields are temporarily set to `'evaluate-' . otherTask` (that
+     * is the string cal_swap parses — the 9-char prefix), cal_swap runs on both with type
+     * `swap-task`, the original `action` strings are restored, the tasks are exchanged, and
+     * any order either was working on is nullified (`state = -1`, `workingOn = 0`).
+     *
+     * Note the `actioned` check has no `staffName` guard in the PHP: an empty slot with
+     * `actioned` set would be swapped too.
+     */
+    static void applySwapTask(PhpArray content, Map<String, Object> actionRow, long maxMembers) {
+        if (!truthy(rowGet(actionRow, "swapTask"))) return;
+
+        long first = 0;
+        Object firstTask = null;
+        Object firstTaskExp = null;
+
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m == null || !truthy(m.get("actioned"))) continue;
+
+            if (first == 0) {
+                first = c;
+                firstTask = m.get("task");
+                firstTaskExp = m.get("taskExp");
+                continue;
+            }
+
+            PhpArray m1 = member(content, first);
+            Object keptAction1 = m1.get("action");
+            Object keptAction2 = m.get("action");
+            m1.put("action", "evaluate-" + str(m.get("task")));
+            m.put("action", "evaluate-" + str(m1.get("task")));
+
+            DrillCommon.calSwap(content, (int) first, "swap-task");
+            DrillCommon.calSwap(content, (int) c, "swap-task");
+
+            m1.put("action", keptAction1);
+            m.put("action", keptAction2);
+
+            Object task2 = m.get("task");
+            Object taskExp2 = m.get("taskExp");
+            m1.put("task", task2);
+            m1.put("taskExp", taskExp2);
+            m.put("task", firstTask);
+            m.put("taskExp", firstTaskExp);
+
+            releaseOrder(content, m1);
+            releaseOrder(content, m);
+        }
+    }
+
+    /** workingOn = 0, and the order it pointed at is nullified. */
+    private static void releaseOrder(PhpArray content, PhpArray m) {
+        long workingOn = (long) num(m.get("workingOn"));
+        if (workingOn > 0) {
+            Object o = PhpJson.path(content, "orders", workingOn);
+            if (o instanceof PhpArray order) order.put("state", -1L);
+        }
+        m.put("workingOn", 0L);
+    }
+
     /**
      * case "MORE_ACTIONS", the block guarded by `$action['actionType'] == 'recruits'`:
      * move each actioned recruit into the first free slot that wants the action's task.
