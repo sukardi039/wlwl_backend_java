@@ -413,3 +413,43 @@ adds only the `*Exp` three. Faithful, and asserted by test.
 `*Prf` is worth noting: it is `baseinfo.displayKey` — the short code such as `SK` —
 obtained through the cross join `from profileclass, baseinfo where profileName = name`,
 not from profileclass.
+
+## 13. The catalogue modules (environmental, template, product, style, task, agent, licensebatch, package)
+
+Eight modules with one shape, so one base class (`AbstractCatalogueModule`): list
+(+optional LIMIT) → array/object by query string → 204 when empty; PUT = upsert, then
+re-read, then the same response shape.
+
+**13.1 The PUT re-read is keyed on `$qdata->name`, not on the new key.** For the five
+baseinfo-backed catalogues the re-read is the module's own listing query filtered by the
+BASEINFO display name. Inserting an entity whose name has no baseinfo row writes the row
+and then answers **204**, because the join finds nothing. This is why the entity tables
+are effectively second-class citizens of baseinfo, and it is asserted by test.
+
+**13.2 POST uses a LEFT JOIN but the re-read uses an INNER JOIN** (environmental,
+template, action). So a baseinfo row with no entity row appears in the list (with null
+entity columns) but never in a PUT response.
+
+**13.3 baseclass values are PLURAL** in the module filters: `'actions'`, `'products'`,
+`'tasks'`, `'styles'`, `'environment'`, `'template'`, `'profiles'`. Also note
+`'styles'` is shared between the driver-style profile rows and the style catalogue, so
+`style/` legitimately returns rows with a null style half.
+
+**13.4 `product`'s INSERT hardcodes `productName = 'basic-product'`** — all new
+products collide on the primary key unless the row already exists. Its UPDATE keys on
+`productShortName = $qdata->productName`, which is a different field from the branch
+condition (`$qdata->productName`).
+
+**13.5 `licensebatch`'s PUT has no update branch.** Every PUT mints a new `uniqid()`
+batchId and inserts, so editing a batch from the UI creates another one.
+
+**13.6 `profileclass`'s PUT takes its TABLE NAME from the request.** `$fileType =
+$data->mod` is interpolated as an identifier: `"insert into ".$fileType`. That cannot be
+parameterised, so the port accepts only a bare identifier (`[A-Za-z_][A-Za-z0-9_]*`) and
+answers 500 otherwise — the same status the SQL error would produce. The legitimate
+value is `profileclass`.
+
+**13.7 `taskefficiency` has a query-string bug.** Its filter appends
+`and profileImpactKey = '<qs>'` to a table with no such column, so ANY query string is
+an SQL error (500) in production too. Reproduced by issuing the same statement, and
+tested. Its PUT also interpolates its numbers unquoted.

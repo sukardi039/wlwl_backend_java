@@ -57,7 +57,11 @@ create table company (
   lastSeen       datetime default null,
   availableTill  date default null,
   -- staffsignin joins backenduser to company and selects c.lang
-  lang           varchar(20) default 'en'
+  lang           varchar(20) default 'en',
+  runOne         varchar(100) default null,
+  runTwo         varchar(100) default null,
+  runThree       varchar(100) default null,
+  companyType    varchar(100) default null
 );
 
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
@@ -67,14 +71,15 @@ insert into baseinfo (baseclass, name, displayKey, orgKey) values
   ('styles', 'Analytical', 'AN', null),
   ('styles', 'Driver',     'DR', null),
   ('morale', 'High',       'HI', null),
-  ('product','Widget',     'W1', null),
-  ('product','Ghost',      'GH', null),
-  ('task',   'Inspect',    'TI', null),
+  -- the catalogue modules filter on these PLURAL baseclass values
+  ('products','Widget',    'W1', null),
+  ('products','Ghost',     'GH', null),
+  ('tasks',  'Inspect',    'TI', null),
   ('template','BasicTpl',  'BT', null),
-  ('style',  'Formal',     'FO', null),
-  ('action', 'Plan',       'PL', null),
-  ('action', 'Advise',     'AD', null),
-  ('action', 'Hidden',     'HD', null),
+  ('styles', 'Formal',     'FO', null),
+  ('actions','Plan',       'PL', null),
+  ('actions','Advise',     'AD', null),
+  ('actions','Hidden',     'HD', null),
   ('environment','Offshore','OF', null),
   -- the three profile names the profile* modules read from baseclass='profiles';
   -- the profileClassCode -> displayKey map comes from these rows
@@ -110,7 +115,9 @@ insert into baseclass (baseClassType, baseClassDisplayKey, baseClassName, baseAc
 create table profileclass (
   profileClassCode        varchar(100) not null primary key,
   profileClassDisplayName varchar(100) not null,
-  profileName             varchar(100) not null
+  profileName             varchar(100) not null,
+  profileClassMin         int default 0,
+  profileClassMax         int default 0
 );
 
 insert into profileclass (profileClassCode, profileClassDisplayName, profileName) values
@@ -145,7 +152,11 @@ insert into companytype (companyTypeCode) values ('agency'), ('direct');
 create table product (
   productId        int not null,
   productName      varchar(100) not null,
-  productShortName varchar(100) default null
+  productShortName varchar(100) default null,
+  productDescription varchar(500) default null,
+  ordersPerDay       int default 0,
+  minOrderValue      decimal(6,2) default 0.00,
+  maxOrderValue      decimal(6,2) default 0.00
 );
 insert into product (productId, productName, productShortName) values
   (1, 'Widget', 'W1'),
@@ -157,12 +168,18 @@ create table template (
   -- the model module sizes its staff/environment/recruit arrays from these
   numberOfStaff     int default 0,
   environmentEvents int default 0,
-  recruits          int default 0
+  recruits          int default 0,
+  duration          decimal(6,2) default 0.00,
+  numberOfDays      int default 0,
+  report            varchar(100) default null
 );
 insert into template (templateName, templateDescription, numberOfStaff, environmentEvents, recruits)
 values ('BasicTpl', 'A basic template', 2, 1, 1);
 
-create table task (taskName varchar(100) not null primary key);
+create table task (
+  taskName        varchar(100) not null primary key,
+  taskDescription varchar(500) default null
+);
 insert into task (taskName) values ('Inspect');
 
 create table style (
@@ -184,7 +201,18 @@ create table action (
   actionType   int default null,
   parentAction varchar(100) default null,
   seq          int default 0,
-  show         int default 0
+  show         int default 0,
+  actionDescription varchar(500) default null,
+  duration          decimal(6,2) default 0.00,
+  applyAll          int default 0,
+  minStaff          int default 0,
+  maxStaff          int default 0,
+  withTask          int default 0,
+  swapTask          int default 0,
+  minMemberSize     int default 0,
+  affectedWhen      varchar(100) default null,
+  affectedIf        varchar(100) default null,
+  away              int default 0
 );
 insert into action (actionName, actionType, parentAction, seq, show) values
   ('Plan',   1, 'Plan',    1, 1),
@@ -192,13 +220,31 @@ insert into action (actionName, actionType, parentAction, seq, show) values
   ('Hidden', 1, 'Plan',    3, 0);
 
 create table taskefficiency (
-  productName varchar(100) not null,
-  taskName    varchar(100) not null,
-  efficiency  decimal(5,2) default null
+  taskEfficiencyId int not null auto_increment primary key,
+  productName      varchar(100) not null,
+  taskName         varchar(100) not null,
+  efficiency       decimal(5,2) default null,
+  skillsWeight     decimal(6,2) default 0.50,
+  moraleWeight     decimal(6,2) default 0.50,
+  duration         decimal(6,2) default 1.00,
+  taskDisplayName  varchar(100) default null,
+  passingRate      decimal(6,2) default 1.00,
+  target           decimal(6,2) default 1.00
 );
 insert into taskefficiency (productName, taskName, efficiency) values ('W1', 'Inspect', 12.50);
 
-create table environment (environmentName varchar(100) not null primary key);
+create table environment (
+  environmentName        varchar(100) not null primary key,
+  environmentDescription varchar(500) default null,
+  orderImpact            int default 0,
+  moraleImpact           int default 0,
+  duration               decimal(6,2) default 0.00,
+  applyAll               int default 0,
+  randomOne              int default 0,
+  lowMorale              int default 0,
+  lowEfficiency          int default 0,
+  highEfficiency         int default 0
+);
 insert into environment (environmentName) values ('Offshore');
 
 -- modelContent holds JSON TEXT and is decoded+re-embedded by the PHP
@@ -232,7 +278,9 @@ insert into bossmessage (messageCode, messageText) values ('WELCOME', 'Welcome a
 -- agentlicense_view is a read-only join in production; a2 is expired.
 create table agent (
   agentId   varchar(45) not null primary key,
-  agentName varchar(100) not null
+  agentName varchar(100) not null,
+  availableTill date default null,
+  active        int default 0
 );
 insert into agent (agentId, agentName) values ('a1', 'Acme Agent'), ('a2', 'Old Agent');
 
@@ -272,7 +320,8 @@ create table licensebatch (
   licenseVolume int default 0,
   licenseUsed   int default 0,
   issueDate     date default null,
-  availableTill date default null
+  availableTill date default null,
+  batchDesc     varchar(200) default null
 );
 
 -- B1 has 10 seats, 3 used (so 7 available). B2 is exhausted and must be skipped.

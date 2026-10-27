@@ -29,7 +29,12 @@ class BackendGatewayParityTest {
     @Autowired
     private MockMvc mockMvc;
 
-    private static final String MOD_STYLES = "{\"restkey\":\"K1\",\"method\":\"POST\",\"mod\":\"styles\"}";
+    /**
+     * Any class with exactly two baseinfo rows works here. 'products' is used rather
+     * than 'styles' because baseclass 'styles' is shared with the driver-style profile
+     * entries, so its row count changes as other modules' fixtures grow.
+     */
+    private static final String MOD_STYLES = "{\"restkey\":\"K1\",\"method\":\"POST\",\"mod\":\"products\"}";
 
     @Test
     @DisplayName("no query string -> response is an ARRAY of rows, with synthetic 'key' column")
@@ -40,10 +45,10 @@ class BackendGatewayParityTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray())
                 .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].key").value("Analytical"))
+                .andExpect(jsonPath("$[0].key").value("Widget"))
                 // H2 lowercases unquoted identifiers; MySQL preserves them.
                 // The shape/type behaviour under test is unaffected.
-                .andExpect(jsonPath("$[0].displaykey").value("AN"));
+                .andExpect(jsonPath("$[0].displaykey").value("W1"));
     }
 
     @Test
@@ -54,7 +59,7 @@ class BackendGatewayParityTest {
                         .content(MOD_STYLES))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isMap())
-                .andExpect(jsonPath("$.key").value("Driver"));
+                .andExpect(jsonPath("$.key").value("Ghost"));
     }
 
     @Test

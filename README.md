@@ -9,16 +9,17 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **12 of 33** (`profileaffect`, `profileimpact`, `profilesens`, `model`, `drilloverview`, `drilleffective`, `drillcapable`, `backenduser`, `staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **23 of 33** (see `../wlwl_parity_ledger.md`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **120 passing** (`mvn test`) |
+| Tests | **143 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`signin`, `registerdemo`, `drillcompare` and 17 others.
+`signin`, `registerdemo`, `simulator`, `controldrill`, `drillcompare`, `messages`,
+`consoleuser`, `license`, `packageremove`.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -86,6 +87,12 @@ service/
   ProfileSeeder.java      the 3-way profile combination seeding
   ProfileExpansion.java   code -> display name / display key maps
 modules/
+  AbstractCatalogueModule.java  shared list/upsert/re-read shape
+  EnvironmentalModule / TemplateModule / ProductModule / StyleModule / TaskModule
+  AgentModule / LicensebatchModule / PackageModule
+  ActionModule.java        baseinfo 'actions' + 3 lookups
+  TaskefficiencyModule.java
+  ProfileclassModule.java  dynamic table name, identifier-guarded
   ProfileimpactModule.java / ProfileaffectModule.java  (shared post.php)
   ProfilesensModule.java   port of profilesens/ (Exp + Prf)
   ModelModule.java         port of model/ (get/post/put)
