@@ -659,12 +659,45 @@ Verified against real data: all six rows immediately preceding a `SELECT_STYLE` 
 carry an action name; the 8 rows with a blank `control.action` (steps 3, 8, 9, 18, 19,
 23, 28, 40) and none of them precedes a style pick.
 
-### Set structure (confirmed by the 2023-12 sample)
+### The real unit is a WEEK of 5 days, not "a set of 5 records"
 
-One drill = `INTRODUCTION` (step 0, day 0) + 7 sets + a terminal row. Each set is
-`SELECT_STYLE` followed by **4 real actions**; the last set may be short (this sample: 1
-action). Extra records can appear *inside* a set without consuming an action slot, so a
-naive count per set reads 5,6,6,5,5,4,2 instead of 4,4,4,4,4,4,1.
+`INTRODUCTION` is step 0 / day 0. After that the drill runs in **weeks of 5 days**:
+
+```
+day 1 of the week  -> SELECT_STYLE   (pick the style for the week)
+days 2,3,4,5       -> one action each
+```
+
+Verified: `SELECT_STYLE` lands on days **1, 6, 11, 16, 21, 26, 31** — exactly every fifth
+day. Counting *records* per set instead gives the misleading 5,6,6,5,5,4,2, because extra
+rows are written on environment days (below). The last week is short: this drill ended at
+day 33, i.e. day 3 of week 7 (days 31-35).
+
+`content.week` carries `weekNumber`, consistent with 5-day weeks.
+
+### `content.environments` is a SCHEDULE, not a log
+
+It is a 6-element list, **byte-identical in all 42 rows** — computed at init, never
+appended:
+
+```json
+{"environmentName":"Financial-Crisis","environmentExp":"_u.e_fin_crisis","happenOn":"7"}
+```
+
+`happenOn` is a **day number as a string**. This drill's schedule:
+
+| day | event |
+|---:|---|
+| 3 | new-crm |
+| 7 | Financial-Crisis **and** morale-dropped |
+| 15 | critise-product |
+| 18 | 360-feedback |
+| 22 | efficiency-dropped |
+
+**Environment events write their own `drilldetail` rows on their scheduled day**, which
+is why such a day holds more than one row. The correlation is exact for days 3, 7, 18 and
+22 (1, 2, 1, 1 extra rows for 1, 2, 1, 1 events). Day 15 has 2 extra rows for 1 event,
+and day 33 has one unexplained extra row before the terminal `COMPLETED` — still open.
 
 ### Status ladder
 
