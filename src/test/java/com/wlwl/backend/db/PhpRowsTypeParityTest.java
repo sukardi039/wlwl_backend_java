@@ -28,7 +28,8 @@ class PhpRowsTypeParityTest {
     @Test
     @DisplayName("decimal -> string, date/datetime -> PHP format, int stays int")
     void phpCompatibleTypes() {
-        List<Map<String, Object>> rows = PhpRows.query(jdbc, "select * from company");
+        List<Map<String, Object>> rows =
+                PhpRows.query(jdbc, "select * from company where packageId = 'pkg1'");
         assertThat(rows).hasSize(1);
         Map<String, Object> row = rows.get(0);
 
@@ -51,9 +52,25 @@ class PhpRowsTypeParityTest {
     @Test
     @DisplayName("column order is preserved, matching select *")
     void columnOrderPreserved() {
-        List<Map<String, Object>> rows = PhpRows.query(jdbc, "select * from company");
+        List<Map<String, Object>> rows =
+                PhpRows.query(jdbc, "select * from company where packageId = 'pkg1'");
         assertThat(rows.get(0).keySet())
                 .containsExactly("packageid", "companyname", "agentid", "active",
-                        "availablefrom", "commonpw", "creditbalance", "lastseen");
+                        "availablefrom", "commonpw", "creditbalance", "lastseen",
+                        "availabletill");
+    }
+
+    @Test
+    @DisplayName("set() overwrites an existing column in place instead of adding a duplicate")
+    void setOverwritesInPlace() {
+        Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("name", "Analytical");
+        row.put("displaykey", "AN");
+
+        PhpRows.set(row, "displayKey", "ZZ");
+
+        // one key, not two; position preserved
+        assertThat(row.keySet()).containsExactly("name", "displaykey");
+        assertThat(PhpRows.get(row, "displayKey")).isEqualTo("ZZ");
     }
 }

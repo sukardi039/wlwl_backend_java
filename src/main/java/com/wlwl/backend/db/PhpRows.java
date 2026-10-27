@@ -106,6 +106,26 @@ public final class PhpRows {
     }
 
     /**
+     * Overwrite-in-place lookup, for the PHP's synthetic-column idiom
+     * (`$row['displayKey'] = ...`, `$row['skillsExp'] = ...`).
+     *
+     * Inserting the key blindly would ADD a second column when the driver reports
+     * the existing one under different casing (H2 lowercases unquoted identifiers),
+     * leaving a stale duplicate next to the new value. PHP has one key per name,
+     * so this replaces the existing key in place, exactly like `$row['x'] = ...`
+     * on an existing key.
+     */
+    public static void set(Map<String, Object> row, String column, Object value) {
+        for (String k : row.keySet()) {
+            if (k.equalsIgnoreCase(column)) {
+                row.put(k, value);
+                return;
+            }
+        }
+        row.put(column, value);
+    }
+
+    /**
      * Exact-case lookup first, then case-insensitive fallback.
      *
      * MySQL returns column labels with the case they were declared in, so exact

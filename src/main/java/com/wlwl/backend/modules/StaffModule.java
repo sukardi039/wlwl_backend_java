@@ -62,9 +62,9 @@ public class StaffModule implements ModuleHandler {
         }
 
         for (Map<String, Object> row : rows) {
-            row.put("skillsExp", exp.get(String.valueOf(PhpRows.get(row, "skillsProfile"))));
-            row.put("moraleExp", exp.get(String.valueOf(PhpRows.get(row, "moraleProfile"))));
-            row.put("efficiencyExp", exp.get(String.valueOf(PhpRows.get(row, "efficiencyProfile"))));
+            PhpRows.set(row, "skillsExp", exp.get(String.valueOf(PhpRows.get(row, "skillsProfile"))));
+            PhpRows.set(row, "moraleExp", exp.get(String.valueOf(PhpRows.get(row, "moraleProfile"))));
+            PhpRows.set(row, "efficiencyExp", exp.get(String.valueOf(PhpRows.get(row, "efficiencyProfile"))));
         }
 
         ctx.json(PhpRows.arrayOrLastRow(rows, ctx.queryStringLength()));

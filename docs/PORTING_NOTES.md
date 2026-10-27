@@ -122,3 +122,42 @@ Next: the golden-master harness. Record real request/response pairs from the PHP
 app and replay them against this service, diffing JSON. That is the only way to
 prove parity for the ~52 query-string-dependent code paths that no unit test
 will cover.
+
+## 7. Nested aggregates: PHP decides array-vs-object from the KEY TYPE
+
+Flat modules (baseinfo, staff) return `List<Map<String,Object>>` and Jackson emits
+the right thing. `basicinformation` does not — it returns ~300 keys of nested PHP
+arrays, and PHP's `json_encode` picks array vs object from the keys:
+
+```php
+array('a','b')           -> ["a","b"]
+array('x'=>1)            -> {"x":1}
+array(0=>'a',1=>'b')     -> ["a","b"]          // sequential from 0
+array(1=>'a',2=>'b')     -> {"1":"a","2":"b"}  // not sequential from 0
+array()                  -> []
+```
+
+PHP also coerces numeric-string keys to ints on insertion: `'123'` becomes int
+`123`, while `'01'`, `'1.0'`, `'+5'` and `' 5'` stay strings. Building these
+aggregates with a `Map<String,Object>` therefore produces valid JSON with the
+WRONG structure, and the Vue client fails silently — `Array.isArray()` returns
+false and `.map()` throws somewhere unrelated.
+
+So: build aggregates with `db/PhpArray`, which normalises keys on every
+put/get/containsKey and applies the sequential-key rule in `toJsonNode()`.
+`PhpArrayTest` pins the rule down.
+
+Two more `basicinformation` traps worth remembering for other modules:
+
+- **A section with no rows contributes NO keys at all** — not `{}`, not `[]`,
+  absent. Only `company` materialises empty arrays on an empty result, and only
+  because its PHP has an explicit `else` (lines 222-229) that writes exactly six
+  keys. `livepackage_exp` is deliberately NOT among them.
+- **`class_exp` is flat while `class_ref` is nested**
+  (`$jsonarray['class_exp'][$name]` — no class level). Similar-looking lines
+  produce different depths; copy them literally.
+
+Also: `PhpRows.set(row, ...)` exists for the `$row['x'] = ...` idiom. A plain
+`row.put()` adds a second key when the driver reports the column under different
+casing (H2 lowercases unquoted identifiers), which shows up as a stale duplicate
+in test payloads. `set()` replaces in place, like PHP.

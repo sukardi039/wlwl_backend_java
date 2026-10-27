@@ -9,14 +9,15 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **2 of 31** (`baseinfo`, `staff`) |
+| Modules ported | **3 of 31** (`basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
+| PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
-| Tests | 10 passing (`mvn test`) |
+| Tests | **33 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`basicinformation`, `staffsignin`, `backenduser`, `drilloverview`, and 25 others.
+`staffsignin`, `backenduser`, `drilloverview`, and 26 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -77,6 +78,7 @@ session/
 db/
   PhpRows.java            MySQL/JDBC -> PHP-compatible JSON values
 modules/
+  BasicinformationModule.java  port of basicinformation/post.php (18 sections)
   BaseinfoModule.java     port of baseinfo/post.php + put.php
   StaffModule.java        port of staff/post.php
 ```
@@ -92,6 +94,10 @@ Copy the shape of `BaseinfoModule`:
 4. Use `PhpRows.arrayOrLastRow(rows, ctx.queryStringLength())` for the shape.
 5. Leave unimplemented verbs empty — that reproduces the "no get.php" case.
 6. Add a test case to `BackendGatewayParityTest` or a module-specific test class.
+
+Modules that build a nested aggregate (rather than returning rows) must build it
+with `PhpArray`, not `Map`/`List`: PHP decides array-vs-object from the key type,
+and `basicinformation` returns ~300 keys of nested PHP arrays.
 
 Read `docs/PORTING_NOTES.md` before writing any module. It lists the divergences
 that were chosen deliberately and the traps that will silently break parity.

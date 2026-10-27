@@ -1,9 +1,29 @@
--- Minimal slice of the real wlwl schema, just enough to exercise the RPC contract.
--- Column names/casing taken verbatim from the production dump.
+-- Minimal slice of the real wlwl schema, just enough to exercise the RPC contract
+-- and the basicinformation aggregate. Column names/casing taken verbatim from the
+-- production dump where known.
 
+drop view  if exists agentlicense_view;
 drop table if exists baseinfo;
+drop table if exists baseclass;
 drop table if exists restsession;
 drop table if exists company;
+drop table if exists staff;
+drop table if exists profileclass;
+drop table if exists lang;
+drop table if exists companytype;
+drop table if exists product;
+drop table if exists template;
+drop table if exists task;
+drop table if exists style;
+drop table if exists action;
+drop table if exists actiontype;
+drop table if exists taskefficiency;
+drop table if exists environment;
+drop table if exists model;
+drop table if exists params;
+drop table if exists bossmessage;
+drop table if exists agent;
+drop table if exists license;
 
 create table baseinfo (
   baseclass  varchar(100) default null,
@@ -30,7 +50,8 @@ create table company (
   availableFrom  date default '2023-01-01',
   commonPW       varchar(45) default '123456',
   creditBalance  decimal(6,2) default 0.00,
-  lastSeen       datetime default null
+  lastSeen       datetime default null,
+  availableTill  date default null
 );
 
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
@@ -39,7 +60,162 @@ values ('s1', 'u1', 'K1', '2026-01-01 00:00:00', null, null);
 insert into baseinfo (baseclass, name, displayKey, orgKey) values
   ('styles', 'Analytical', 'AN', null),
   ('styles', 'Driver',     'DR', null),
-  ('morale', 'High',       'HI', null);
+  ('morale', 'High',       'HI', null),
+  ('product','Widget',     'W1', null),
+  ('product','Ghost',      'GH', null),
+  ('task',   'Inspect',    'TI', null),
+  ('template','BasicTpl',  'BT', null),
+  ('style',  'Formal',     'FO', null),
+  ('action', 'Plan',       'PL', null),
+  ('action', 'Advise',     'AD', null),
+  ('action', 'Hidden',     'HD', null),
+  ('environment','Offshore','OF', null);
 
-insert into company (packageId, companyName, agentId, active, availableFrom, commonPW, creditBalance, lastSeen)
-values ('pkg1', 'Acme', 'a1', 1, '2026-01-15', '123456', 1.50, '2026-10-26 15:47:01');
+-- pkg1 is live, pkg2 is expired -> only pkg1 must appear in livepackage_*
+insert into company (packageId, companyName, agentId, active, availableFrom, commonPW,
+                     creditBalance, lastSeen, availableTill)
+values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', 1.50, '2026-10-26 15:47:01', '2099-12-31'),
+       ('pkg2', 'OldCo',  'a1', 1, '2020-01-01', '123456', 0.00, null,                 '2021-01-01'),
+       ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', 0.00, null,                 '2099-12-31');
+
+-- ---------------------------------------------------------------- lookups
+
+create table baseclass (
+  baseClassType         varchar(100) not null,
+  baseClassDisplayKey   varchar(100) not null,
+  baseClassName         varchar(100) not null,
+  baseActionType        varchar(100) default null
+);
+
+insert into baseclass (baseClassType, baseClassDisplayKey, baseClassName, baseActionType) values
+  ('styles', 'AN', 'Analytical', 'analyse'),
+  ('styles', 'DR', 'Driver',     'drive');
+
+create table profileclass (
+  profileClassCode        varchar(100) not null primary key,
+  profileClassDisplayName varchar(100) not null,
+  profileName             varchar(100) not null
+);
+
+insert into profileclass (profileClassCode, profileClassDisplayName, profileName) values
+  ('P1', 'Low',    'skills'),
+  ('P2', 'Medium', 'morale');
+
+-- skillsProfile points at a real class; moraleProfile does NOT (proves the
+-- unguarded $exp[...] lookup emits JSON null for a missing code).
+create table staff (
+  staffId           varchar(100) not null primary key,
+  staffName         varchar(100) not null,
+  skillsProfile     varchar(100) default null,
+  moraleProfile     varchar(100) default null,
+  efficiencyProfile varchar(100) default null
+);
+
+insert into staff (staffId, staffName, skillsProfile, moraleProfile, efficiencyProfile) values
+  ('S1', 'Alice', 'P1', 'P2', 'NOPE');
+
+create table lang (langCode varchar(20) not null primary key);
+insert into lang (langCode) values ('en'), ('id');
+
+create table companytype (companyTypeCode varchar(20) not null primary key);
+insert into companytype (companyTypeCode) values ('agency'), ('direct');
+
+-- 'Ghost' has a null productShortName and must be skipped by the join predicate
+create table product (
+  productId        int not null,
+  productName      varchar(100) not null,
+  productShortName varchar(100) default null
+);
+insert into product (productId, productName, productShortName) values
+  (1, 'Widget', 'W1'),
+  (2, 'Ghost',  null);
+
+create table template (
+  templateName        varchar(100) not null primary key,
+  templateDescription varchar(200) default null
+);
+insert into template (templateName, templateDescription) values ('BasicTpl', 'A basic template');
+
+create table task (taskName varchar(100) not null primary key);
+insert into task (taskName) values ('Inspect');
+
+create table style (
+  styleName        varchar(100) not null primary key,
+  styleDescription varchar(200) default null
+);
+insert into style (styleName, styleDescription) values ('Formal', 'Formal style');
+
+create table actiontype (
+  actionType      int not null primary key,
+  typeDescription varchar(100) not null
+);
+insert into actiontype (actionType, typeDescription) values (1, 'Primary'), (2, 'Secondary');
+
+-- 'Plan' is its own parent -> mainAction. 'Advise' hangs off 'Plan' -> subAction.
+-- 'Hidden' has show = 0 -> appears in action_det.action only.
+create table action (
+  actionName   varchar(100) not null primary key,
+  actionType   int default null,
+  parentAction varchar(100) default null,
+  seq          int default 0,
+  show         int default 0
+);
+insert into action (actionName, actionType, parentAction, seq, show) values
+  ('Plan',   1, 'Plan',    1, 1),
+  ('Advise', 2, 'Plan',    2, 1),
+  ('Hidden', 1, 'Plan',    3, 0);
+
+create table taskefficiency (
+  productName varchar(100) not null,
+  taskName    varchar(100) not null,
+  efficiency  decimal(5,2) default null
+);
+insert into taskefficiency (productName, taskName, efficiency) values ('W1', 'Inspect', 12.50);
+
+create table environment (environmentName varchar(100) not null primary key);
+insert into environment (environmentName) values ('Offshore');
+
+-- modelContent holds JSON TEXT and is decoded+re-embedded by the PHP
+create table model (
+  modelId       varchar(100) not null primary key,
+  modelName     varchar(100) not null,
+  modelTemplate varchar(100) not null,
+  modelContent  varchar(2000) default null
+);
+insert into model (modelId, modelName, modelTemplate, modelContent) values
+  ('M1', 'Model One', 'BasicTpl', '{"nodes":[1,2],"label":"x"}');
+
+-- `key` is a reserved word in MySQL and H2 alike; quoted so the DDL is accepted
+-- while the column label still comes back as `key`.
+create table params (
+  "key"   varchar(100) not null primary key,
+  "value" varchar(200) default null
+);
+insert into params ("key", "value") values ('timezone', 'Asia/Jakarta'), ('123', 'numeric-key');
+
+create table bossmessage (
+  messageCode varchar(100) not null primary key,
+  messageText varchar(2000) default null
+);
+insert into bossmessage (messageCode, messageText) values ('WELCOME', 'Welcome aboard');
+
+-- agentlicense_view is a read-only join in production; a2 is expired.
+create table agent (
+  agentId   varchar(45) not null primary key,
+  agentName varchar(100) not null
+);
+insert into agent (agentId, agentName) values ('a1', 'Acme Agent'), ('a2', 'Old Agent');
+
+create table license (
+  licenseId     varchar(45) not null primary key,
+  agentId       varchar(45) not null,
+  availableFrom date default null,
+  availableTill date default null
+);
+insert into license (licenseId, agentId, availableFrom, availableTill) values
+  ('L1', 'a1', '2026-01-01', '2099-12-31'),
+  ('L2', 'a2', '2020-01-01', '2021-01-01');
+
+create view agentlicense_view as
+  select a.agentId, a.agentName, l.availableFrom, l.availableTill
+  from agent a join license l on l.agentId = a.agentId;
