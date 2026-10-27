@@ -894,7 +894,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
 | `drill/action.php` | 891 | **not ported** — returns 501 |
-| `drill/bossreview.php` | 108 | **not ported** — only reached via `action.php` |
+| `drill/bossreview.php` | 108 | **ported + tested** (`BossReviewTest`, 4 cases) |
 | `drill/post.php` | 60 | **ported + tested** (`DrillPostParityTest`, 6 cases) — POST verb, query string = userId |
 
 `DrillCommon` present: `writeHistory`, `dbg`, `readParams`, `memberWhere`, `currentMembers`,
@@ -1151,3 +1151,32 @@ missing from the test fixture and has been added.
 
 With this, `action.php` (891 lines) and `bossreview.php` (108) are the only PHP left in
 `drill/`.
+
+## 27. drill/bossreview.php — the boss's reaction
+
+Ported last so `action.php`'s SELECT_STYLE branch can call it. Five things to know:
+
+**27.1 It appends to `content.log.action` BEFORE the early return.** The
+`[actionName, noImpact, managementAction]` triple lands even for a `noImpact` action that
+skips the whole review, so the log always has one entry per reviewed step.
+
+**27.2 `SELECT_STYLE` overrides two inputs.** It forces `applyAll = 0` (local copy only —
+the action row is untouched) and it makes EVERY named member count as an IMPACT regardless
+of the `actioned` flag. For any other phase, a member who did not act becomes an AFFECT
+(`added != 0`) or is ignored.
+
+**27.3 `noImpact` is compared loosely against 1**, but `SELECT_STYLE` re-enables the review:
+`if ($action['noImpact'] != 1 || $q->action == 'SELECT_STYLE')`.
+
+**27.4 Four percentages, then a range lookup.** Rates are `plus/count*100` as floats; the
+PHP splices them into the SQL inside single quotes, so MySQL casts `'50'` back to a number.
+The port binds them as numbers — same comparison. Zebra-striped `bossreview` rows whose
+`From..To` ranges contain the rates and whose `managementAction` matches the action row.
+
+**27.5 `_e` is appended to the message only when the row wants a comment AND the team's
+efficiency actually rose** (`$row['efficiencyChange'] && $effAdd > 0`). `effCount` is
+computed and never used. `content.bossRev.descriptions` is what `writeSummary` later copies
+into the step's `summary[].bossRev`.
+
+The test fixture gained a `bossreview` table (three rows covering unanimous / mixed /
+management-specific cases).

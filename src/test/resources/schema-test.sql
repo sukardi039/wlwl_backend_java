@@ -325,6 +325,38 @@ create table params (
 );
 insert into params ("key", "value") values ('timezone', 'Asia/Jakarta'), ('123', 'numeric-key');
 
+-- drill/bossreview.php selects a row whose ranges contain the step's percentages.
+-- reviewId 1..4 cover the interesting corners; `emotion`/`impactEmotion`/`affectEmotion`
+-- are not part of the lookup (only efficiencyChange and bossMsg are read back).
+drop table if exists bossreview;
+create table bossreview (
+  reviewId         bigint not null auto_increment primary key,
+  reviewName       varchar(100) not null,
+  action           varchar(100) default 'MORE_ACTIONS',
+  applyAll         int default 0,
+  impactAppFrom    int default null,
+  impactAppTo      int default null,
+  impactRejFrom    int default null,
+  impactRejTo      int default null,
+  affectAppFrom    int default null,
+  affectAppTo      int default null,
+  affectRejFrom    int default null,
+  affectRejTo      int default null,
+  emotion          int default null,
+  impactEmotion    int default null,
+  affectEmotion    int default null,
+  bossMsg          varchar(100) default null,
+  managementAction int default null,
+  efficiencyChange int default null
+);
+insert into bossreview (reviewName, action, applyAll, impactAppFrom, impactAppTo,
+                        impactRejFrom, impactRejTo, affectAppFrom, affectAppTo,
+                        affectRejFrom, affectRejTo, managementAction, efficiencyChange,
+                        bossMsg) values
+  ('allGood',   'SELECT_STYLE',  0,  100, 100,   0,  0,   0, 100,   0, 100, 1, 1, 'Nice pick'),
+  ('allGood2',  'SELECT_STYLE',  0,    0, 100,   0, 100, 0, 100,   0, 100, 1, 0, 'Boss shrugs'),
+  ('mixedMgmt', 'MORE_ACTIONS',  1,    0, 100,   0, 100, 0, 100,   0, 100, 2, 0, 'Keep going');
+
 create table bossmessage (
   messageCode varchar(100) not null primary key,
   messageText varchar(2000) default null

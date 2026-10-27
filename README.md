@@ -15,7 +15,7 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **228 passing** (`mvn test`, 27 test classes) |
+| Tests | **232 passing** (`mvn test`, 28 test classes) |
 
 Not yet ported, and why:
 
@@ -116,6 +116,7 @@ modules/
   DrillInit.java          (service/) drill/init.php — builds the drill state document
   DrillEnvironment.java   (service/) drill/environment.php — fires the day's event
   DrillPost.java          (service/) drill/post.php — POST verb: control + runs home screen
+  BossReview.java         (service/) drill/bossreview.php — the boss's reaction to a step
 ```
 
 ## Adding a module
