@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -76,6 +77,21 @@ public class RpcContext {
     }
 
     public void status(int status) { response.setStatus(status); }
+
+    /**
+     * PHP: header('Content-type: application/json'); http_response_code(n); echo $raw;
+     *
+     * Writes a pre-formed JSON string byte-for-byte. Needed by staffsignin/chkauth.php,
+     * which echoes the upstream webhook's response body VERBATIM rather than
+     * re-encoding a decoded structure. Re-encoding would reorder keys and change
+     * number formatting, so the raw passthrough is the only faithful option.
+     */
+    public void rawJson(int status, String raw) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.getOutputStream().write(raw == null ? new byte[0] : raw.getBytes(StandardCharsets.UTF_8));
+        response.flushBuffer();
+    }
 
     /** PHP: echo "some string"; (text/html by default there, text/plain here). */
     public void text(String body) throws IOException {

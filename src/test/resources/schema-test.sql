@@ -24,6 +24,7 @@ drop table if exists params;
 drop table if exists bossmessage;
 drop table if exists agent;
 drop table if exists license;
+drop table if exists backenduser;
 
 create table baseinfo (
   baseclass  varchar(100) default null,
@@ -51,7 +52,9 @@ create table company (
   commonPW       varchar(45) default '123456',
   creditBalance  decimal(6,2) default 0.00,
   lastSeen       datetime default null,
-  availableTill  date default null
+  availableTill  date default null,
+  -- staffsignin joins backenduser to company and selects c.lang
+  lang           varchar(20) default 'en'
 );
 
 insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
@@ -75,7 +78,9 @@ insert into baseinfo (baseclass, name, displayKey, orgKey) values
 insert into company (packageId, companyName, agentId, active, availableFrom, commonPW,
                      creditBalance, lastSeen, availableTill)
 values ('pkg1', 'Acme',   'a1', 1, '2026-01-15', '123456', 1.50, '2026-10-26 15:47:01', '2099-12-31'),
-       ('pkg2', 'OldCo',  'a1', 1, '2020-01-01', '123456', 0.00, null,                 '2021-01-01'),
+       -- active = 0 (not 2): still in basicinformation's "active < 2" list, but it is
+       -- what makes staffsignin's company-active gate fail for U4 (405).
+       ('pkg2', 'OldCo',  'a1', 0, '2020-01-01', '123456', 0.00, null,                 '2021-01-01'),
        ('pkg3', 'Deleted','a1', 2, '2020-01-01', '123456', 0.00, null,                 '2099-12-31');
 
 -- ---------------------------------------------------------------- lookups
@@ -210,7 +215,11 @@ create table license (
   licenseId     varchar(45) not null primary key,
   agentId       varchar(45) not null,
   availableFrom date default null,
-  availableTill date default null
+  availableTill date default null,
+  -- staffsignin/post.php gates general users on license(userId, packageId);
+  -- the agent view above only needs agentId/dates.
+  userId        varchar(45)  default null,
+  packageId     varchar(100) default null
 );
 insert into license (licenseId, agentId, availableFrom, availableTill) values
   ('L1', 'a1', '2026-01-01', '2099-12-31'),
@@ -219,3 +228,48 @@ insert into license (licenseId, agentId, availableFrom, availableTill) values
 create view agentlicense_view as
   select a.agentId, a.agentName, l.availableFrom, l.availableTill
   from agent a join license l on l.agentId = a.agentId;
+
+-- ------------------------------------------------------------ staffsignin
+
+-- loginPassword holds MySQL 4.1 PASSWORD() hashes: '*' + hex(SHA1(SHA1(pw))).
+--   secret   -> *14E65567ABDB5135D0CFD9A70B3032C179A49EE7
+--   hunter2  -> *58815970BE77B3720276F63DB198B1FA42E5CC02
+--   letmein  -> *D37C49F9CBEFBF8B6F4B165AC703AA271E079004
+create table backenduser (
+  userId        varchar(100) not null primary key,
+  userName      varchar(100) default null,
+  loginName     varchar(100) not null,
+  loginPassword varchar(100) default null,
+  level         int default 0,
+  active        int default 1,
+  companyName   varchar(100) default null,
+  instructor    int default 0,
+  email         varchar(100) default null
+);
+
+-- U1: general user, licensed company -> login succeeds
+-- U2: instructor (level 1) -> license gate skipped entirely
+-- U3: general user with NO license row -> 406
+-- U4: general user licensed, but company inactive -> 405
+insert into backenduser (userId, userName, loginName, loginPassword, level, active,
+                         companyName, instructor, email) values
+  ('U1', 'Alice', 'alice',  '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 0, 1, 'pkg1', 0, 'alice@example.com'),
+  ('U2', 'Bob',   'bob',    '*58815970BE77B3720276F63DB198B1FA42E5CC02', 1, 1, 'pkg1', 1, 'bob@example.com'),
+  ('U3', 'Carol', 'carol',  '*D37C49F9CBEFBF8B6F4B165AC703AA271E079004', 0, 1, 'pkg2', 0, 'carol@example.com'),
+  ('U4', 'Dave',  'dave',   '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 0, 1, 'pkg2', 0, 'dave@example.com'),
+  ('U5', 'Erin',  'erin',   '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 0, 0, 'pkg1', 0, 'erin@example.com');
+  -- U6/U7 exist only to drive the GETAUTH webhook failure branches
+insert into backenduser (userId, userName, loginName, loginPassword, level, active,
+                         companyName, instructor, email) values
+  ('U6', 'Boom',     'boom',     '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 1, 1, 'pkg1', 1, 'boom@example.com'),
+  ('U7', 'MissingK', 'missingk', '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7', 1, 1, 'pkg1', 1, 'missingk@example.com');
+
+insert into license (licenseId, agentId, availableFrom, availableTill, userId, packageId) values
+  -- agentId 'a9' is not in the agent table, so these do NOT multiply the rows in
+  -- agentlicense_view (which is an inner join on agentId).
+  ('L3', 'a9', '2026-01-01', '2099-12-31', 'U1', 'pkg1'),
+  ('L4', 'a9', '2026-01-01', '2099-12-31', 'U4', 'pkg2');
+
+-- a live session for the GET lookup path; the query string is the sessionId
+insert into restsession (sessionId, userId, restkey, createdOn, usedOn, deletedOn)
+values ('sess1', 'U1', 'RK1', '2026-01-01 00:00:00', null, null);

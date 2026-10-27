@@ -110,6 +110,27 @@ public final class PhpArray extends LinkedHashMap<Object, Object> {
         return created;
     }
 
+    /**
+     * Case-insensitive replace-in-place, the PhpArray equivalent of PhpRows.set.
+     *
+     * Needed when the row being edited came from a driver that reports column names
+     * in a different case than the PHP (H2 lowercases unquoted identifiers). A plain
+     * put("loginPassword", "") would ADD a camelCase duplicate beside the lowercased
+     * key, leaving the original value — including a password hash — in the JSON.
+     * This replaces the existing key instead, exactly like $row['loginPassword'] = ''
+     * in PHP, and appends when absent.
+     */
+    public PhpArray set(String column, Object value) {
+        for (Object k : keySet()) {
+            if (k instanceof String s && s.equalsIgnoreCase(column)) {
+                super.put(k, value);
+                return this;
+            }
+        }
+        super.put(column, value);
+        return this;
+    }
+
     @Override
     public Object get(Object key) {
         return super.get(key(key));

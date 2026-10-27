@@ -57,7 +57,7 @@ class PhpRowsTypeParityTest {
         assertThat(rows.get(0).keySet())
                 .containsExactly("packageid", "companyname", "agentid", "active",
                         "availablefrom", "commonpw", "creditbalance", "lastseen",
-                        "availabletill");
+                        "availabletill", "lang");
     }
 
     @Test

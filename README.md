@@ -9,15 +9,16 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **3 of 31** (`basicinformation`, `baseinfo`, `staff`) |
+| Modules ported | **4 of 31** (`staffsignin`, `basicinformation`, `baseinfo`, `staff`) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
-| Tests | **33 passing** (`mvn test`) |
+| Login + MySQL `PASSWORD()` hashing | done and tested |
+| Tests | **65 passing** (`mvn test`) |
 
 Not yet ported: `drill` (5,617 LOC — 61% of the backend, the real work),
-`staffsignin`, `backenduser`, `drilloverview`, and 26 others.
+`backenduser`, `drilloverview`, and 26 others.
 See `../wlwl_parity_ledger.md`.
 
 ## Build and run
@@ -78,6 +79,7 @@ session/
 db/
   PhpRows.java            MySQL/JDBC -> PHP-compatible JSON values
 modules/
+  StaffsigninModule.java  port of staffsignin/ (login, session, GETAUTH/CHKAUTH)
   BasicinformationModule.java  port of basicinformation/post.php (18 sections)
   BaseinfoModule.java     port of baseinfo/post.php + put.php
   StaffModule.java        port of staff/post.php

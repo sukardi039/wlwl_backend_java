@@ -161,3 +161,66 @@ Also: `PhpRows.set(row, ...)` exists for the `$row['x'] = ...` idiom. A plain
 `row.put()` adds a second key when the driver reports the column under different
 casing (H2 lowercases unquoted identifiers), which shows up as a stale duplicate
 in test payloads. `set()` replaces in place, like PHP.
+
+## 8. The login surface (staffsignin) — three traps, one blocker
+
+`staffsignin/` is the only module that does NOT include `etc/restdx.inc`. Three of
+its behaviours would be "fixed" by anyone tidying the API, and each would break the
+client.
+
+**8.1 There are two different dispatch rules, and they must not be conflated.**
+
+| module family | verb source |
+|---|---|
+| `restdx` modules (most) | the request **body**'s `method` field wins when truthy |
+| `staffsignin` | the **HTTP verb**, overridden by `?method=`; the body's `method` is ignored |
+
+`?method=` is how two pseudo-verbs are reached that are not HTTP verbs:
+`GETAUTH` and `CHKAUTH`. This lives behind `ModuleHandler.allowsQueryStringMethodOverride()`
+rather than in the shared gateway, because applying it globally would change how
+every restdx module resolves its verb.
+
+Watch the empty case: `isset($_GET['method'])` is TRUE for `?method=`, and
+`strtoupper('')` is `''`, which falls through to `echo "No method specified!"`.
+Do not fall back to the HTTP verb there.
+
+**8.2 No restkey gate.** You cannot present a session key before logging in, so this
+module is in the gateway's `PUBLIC_MODULES` set. Adding auth here would make login
+impossible.
+
+**8.3 GET returns an empty 200, not 204.** With no query string the PHP replaces the
+whole statement with `sessionId = 'xxxx'` (a sentinel matching nothing), so the
+response is empty with the default 200 in place. It never calls
+`http_response_code(204)`. The query string itself IS the sessionId — raw,
+undecoded.
+
+### The `PASSWORD()` blocker, solved without a data migration
+
+`post.php` authenticates with `b.loginPassword = password('...')`, and MySQL removed
+`PASSWORD()` in 8.0 — on the 8.0.40 server that statement is a hard error, so login
+is already broken there.
+
+Do not reset the stored hashes. `db/MysqlPassword` computes the identical MySQL 4.1
+value in Java:
+
+```
+"*" + uppercase(hex(SHA1(SHA1(password))))
+```
+
+and the SQL becomes `loginPassword = ?`. Same result set, no schema change, no
+locked-out users. `MysqlPasswordTest` pins `PASSWORD('password')` =
+`*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19`. Note `PASSWORD('')` is `''`, not a hash.
+
+Idiomatic Spring Security (`BCryptPasswordEncoder`) is deliberately NOT used: the
+column contains 41-byte MySQL hashes and the client contract is unchanged. Migrating
+to BCrypt is a separate decision, not part of a parity port.
+
+### Two smaller ones
+
+- **`uniqid()` is 13 lowercase hex chars**, not a UUID: `sprintf("%08x%05x", sec, usec)`.
+  24 primary keys depend on that width. `db/PhpUniqid` reproduces it, including the
+  fact that it carries no randomness.
+- **`chkauth.php` echoes the upstream body verbatim** (`echo $response;`). Decoding
+  and re-encoding would turn `2.50` into `2.5` and reorder keys. `RpcContext.rawJson`
+  writes the bytes through untouched, and the parity test asserts exact string
+  equality against the stub's body.

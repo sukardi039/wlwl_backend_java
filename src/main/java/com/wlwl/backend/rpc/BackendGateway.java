@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.Locale;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
@@ -80,11 +81,11 @@ public class BackendGateway {
             }
         }
 
-        RpcMethod method = resolveMethod(envelope, request);
+        String verb = resolveVerb(handler, envelope, request);
         RpcContext ctx = new RpcContext(module, envelope, request.getQueryString(), response, mapper);
 
         try {
-            handler.handle(method, ctx);
+            handler.handle(verb, ctx);
         } catch (Exception e) {
             // PHP equivalents: mysqli_query returns false, then ->num_rows on
             // false is a fatal error, which IIS surfaces as 500.
@@ -116,15 +117,34 @@ public class BackendGateway {
         }
     }
 
-    /** Body verb wins over the HTTP verb, but only when PHP would consider it truthy. */
-    private RpcMethod resolveMethod(JsonNode envelope, HttpServletRequest request) {
+    /**
+     * Two different dispatch rules exist in the PHP and they must not be conflated:
+     *
+     *  - etc/restdx.inc (most modules): the BODY's "method" wins over the HTTP verb,
+     *    when it is truthy. A query-string method parameter is ignored.
+     *
+     *  - staffsignin/index.php: the HTTP verb is the base, and ?method= overrides it
+     *    (`if (isset($_GET['method'])) $method = strtoupper($_GET['method'])`). The
+     *    BODY's method is ignored entirely. That is how GETAUTH and CHKAUTH are
+     *    reachable — they are not HTTP verbs.
+     *
+     * Note `isset($_GET['method'])` is true for `?method=` with an empty value, and
+     * strtoupper('') is '', which falls to the switch default and echoes
+     * "No method specified!". Reproduced by returning "" rather than falling back.
+     */
+    private String resolveVerb(ModuleHandler handler, JsonNode envelope, HttpServletRequest request) {
+        if (handler.allowsQueryStringMethodOverride()) {
+            String fromQuery = request.getParameter("method");
+            if (fromQuery != null) return fromQuery.trim().toUpperCase(Locale.ROOT);
+            return request.getMethod().toUpperCase(Locale.ROOT);
+        }
         if (envelope != null) {
             JsonNode m = envelope.get("method");
             if (m != null && !m.isNull() && !m.asText().isEmpty()) {
                 String s = m.asText();
-                if (!"0".equals(s)) return RpcMethod.of(s);
+                if (!"0".equals(s)) return s.trim().toUpperCase(Locale.ROOT);
             }
         }
-        return RpcMethod.of(request.getMethod());
+        return request.getMethod().toUpperCase(Locale.ROOT);
     }
 }
