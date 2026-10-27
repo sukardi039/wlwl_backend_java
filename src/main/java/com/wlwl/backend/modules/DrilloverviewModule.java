@@ -254,7 +254,18 @@ public class DrilloverviewModule implements ModuleHandler {
     }
 
     private static boolean isIntegral(Object v) {
-        return v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte;
+        if (v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte) {
+            return true;
+        }
+        // PHP is loosely typed and the blob really does store numbers as strings:
+        // control.numberOfDays is 37 in some rows and "37" in others, and
+        // ordersToComplete is "6"/"8". PHP's `"37" - 33` yields the INT 4, so a numeric
+        // string must take the integer path or the JSON comes out as 4.0.
+        if (v instanceof String s) {
+            String t = s.trim();
+            return !t.isEmpty() && t.matches("[-+]?\\d+");
+        }
+        return false;
     }
 
     private static long toLong(Object v) {

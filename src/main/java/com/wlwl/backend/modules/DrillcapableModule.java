@@ -162,13 +162,29 @@ public class DrillcapableModule implements ModuleHandler {
      * see the class comment.
      */
     private static void sortByTotalCompetency(List<Object> detail) {
-        detail.sort((a, b) -> {
-            Object ta = ((PhpArray) a).get("totalCompetency");
-            Object tb = ((PhpArray) b).get("totalCompetency");
-            boolean lessThan = PhpJson.num(ta) < PhpJson.num(tb);
-            boolean bIsNull = tb == null;
-            return (lessThan && !bIsNull) ? 1 : -1;
-        });
+        // Insertion sort, ON PURPOSE. The reproduced comparator never returns 0, which
+        // violates List.sort's contract: TimSort throws "Comparison method violates its
+        // general contract" once a run reaches ~32 elements, i.e. a company with 30+
+        // drills would crash where PHP only sorts oddly. A hand-rolled sort applies the
+        // same inconsistent expression without the contract check.
+        for (int i = 1; i < detail.size(); i++) {
+            Object key = detail.get(i);
+            int j = i - 1;
+            while (j >= 0 && compareTotal(detail.get(j), key) > 0) {
+                detail.set(j + 1, detail.get(j));
+                j--;
+            }
+            detail.set(j + 1, key);
+        }
+    }
+
+    /** PHP's usort callback, verbatim: never returns 0. */
+    private static int compareTotal(Object a, Object b) {
+        Object ta = ((PhpArray) a).get("totalCompetency");
+        Object tb = ((PhpArray) b).get("totalCompetency");
+        boolean lessThan = PhpJson.num(ta) < PhpJson.num(tb);
+        boolean bIsNull = tb == null;
+        return (lessThan && !bIsNull) ? 1 : -1;
     }
 
     private static String text(JsonNode node, String field) {

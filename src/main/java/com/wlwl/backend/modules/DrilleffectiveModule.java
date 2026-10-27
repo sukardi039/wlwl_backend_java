@@ -238,8 +238,25 @@ public class DrilleffectiveModule implements ModuleHandler {
 
     // ------------------------------------------------------------- helpers
 
+    /**
+     * PHP's `foreach ($arr as $v)`. Real blobs store analysis.action as an OBJECT, so
+     * iterating yields its VALUES - the whole reason the original works, and why a
+     * JSON-array-only assumption silently produced an empty report. Non-object values are
+     * kept on purpose: the same object holds a bare int under "total", and PHP walks that
+     * too (that is where buildRecord's "" key comes from).
+     */
     private static List<?> asList(Object v) {
         if (v instanceof List<?> l) return l;
+        if (v instanceof PhpArray a) {
+            com.fasterxml.jackson.databind.JsonNode n = a.toJsonNode();
+            List<Object> out = new java.util.ArrayList<>();
+            if (n.isObject()) {
+                n.fields().forEachRemaining(e -> out.add(PhpJson.fromJson(e.getValue())));
+            } else if (n.isArray()) {
+                n.forEach(el -> out.add(PhpJson.fromJson(el)));
+            }
+            return out;
+        }
         return List.of();
     }
 

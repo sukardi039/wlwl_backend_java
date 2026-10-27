@@ -9,20 +9,19 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **29 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 2 blocked on `drilldetail.content`. See `../wlwl_parity_ledger.md` |
+| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`), 1 blocked (`drill`, in progress). See `../wlwl_parity_ledger.md` |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **162 passing** (`mvn test`) |
+| Tests | **166 passing** (`mvn test`) |
 
 Not yet ported, and why:
 
 | module | status |
 |---|---|
 | `drill` (5,617 LOC) | **blocked** — needs real `drilldetail.content` sample rows |
-| `drillcompare` (56) | **blocked** — reads `content.current.teamAvg.efficiency` |
 | `signin` (144) | **DROPPED by ruling** — dead: no `wxuser`/`studentlist`/`tasks`, and 0 client call sites |
 | `messages` (51) | **DROPPED by ruling** — dead; risk accepted and logged (see ledger risk register R1–R4) |
 See `../wlwl_parity_ledger.md`.
