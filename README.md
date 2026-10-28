@@ -9,13 +9,13 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **30 of 33** — plus 2 dropped by ruling (`signin`, `messages`); `drill` is the only module still in progress (all of it ported except `mod=ACTION`'s `MORE_ACTIONS` branch, see `docs/PORTING_NOTES.md` §21 and §29) |
+| Modules ported | **32 of 34** — plus 2 dropped by ruling (`signin`, `messages`); `drill` is the only module still in progress (all of it ported except `mod=ACTION`'s `MORE_ACTIONS` branch, see `docs/PORTING_NOTES.md` §21 and §29) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **239 passing** (`mvn verify`, 31 test classes, verified 2026-10-28) |
+| Tests | **250 passing** (`mvn verify`, 33 test classes, verified 2026-10-28) |
 
 Not fully ported yet:
 

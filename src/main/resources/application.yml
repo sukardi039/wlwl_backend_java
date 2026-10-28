@@ -29,6 +29,22 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  servlet:
+    multipart:
+      # images/upload.php is the only multipart endpoint. PHP's php.ini defaults are
+      # upload_max_filesize=2M / post_max_size=8M, and the Vue client refuses anything
+      # over 1.5 MB before sending. Spring's own default is 1 MB, which would silently
+      # start rejecting files PHP accepted — so match PHP, not the framework.
+      max-file-size: 2MB
+      max-request-size: 8MB
+
+# Where images/upload.php stores uploads. Empty = read params.fileLocation from the
+# database, exactly like the PHP. Set WLWL_UPLOAD_DIR on Linux because that parameter
+# holds a Windows path in production.
+wlwl:
+  upload:
+    dir: ${WLWL_UPLOAD_DIR:}
+
 logging:
   level:
     root: INFO

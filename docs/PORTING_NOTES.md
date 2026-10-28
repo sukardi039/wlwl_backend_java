@@ -1316,3 +1316,60 @@ would churn `PhpRows` type tests for no parity gain. Do not "fix" these without 
 `information_schema.table_rows`, which for InnoDB is an estimate. It is a guard against
 loading fixtures onto a real database, not a data-integrity check — an empty database reads
 0, a populated one reads something non-zero. `--force` exists for throwaway databases.
+
+## 31. images/ — the upload endpoint (NOT part of the RPC contract)
+
+**31.1 It was missing from the inventory until 2026-10-28.** The ledger's module table
+went straight from `messages/` to `consoleuser/` and never listed `images/`, so the module
+was neither ported nor dropped — it was simply absent from the count. Found by sweeping
+`wlwl_backend/*/` against `src/main/java/.../modules/`. The lesson: the module list must be
+derived from the directories, not from a hand-written tally.
+
+**31.2 The live endpoint is `upload.php`, and it bypasses everything.** `Staff.vue` ->
+`FileUpload.vue` does `POST /backend/images/upload.php?<restkey>` with a multipart `upFile`
+(1.5 MB client cap) and stores the returned `fileName` as the staff photo. The PHP includes
+`etc/db.inc` directly — **not** `restdx.inc` — so:
+
+- auth is `update restsession set usedOn = now() where restkey = '<QUERY_STRING>'`, with the
+  key taken from the **raw, undecoded query string**, not the JSON envelope;
+- the whole body is skipped when that UPDATE affects 0 rows, leaving an **empty 200**;
+- the stored name is `uniqid() . '.' . pathinfo(name, EXTENSION)` — the client filename is
+  discarded, and the extension keeps its case (`photo.JPG` -> `.JPG`);
+- `move_uploaded_file` failing answers **204**, never 500.
+
+**31.3 Second-resolution auth is a real behavioural quirk.** `now()` is whole seconds and
+`mysqli_affected_rows` counts **changed** rows. Two uploads within the same second leave
+`usedOn` unchanged, so the second one is refused silently (empty 200, nothing stored).
+Reproduced with an explicit `and (usedOn is null or usedOn <> ?)` predicate, because JDBC's
+`update()` returns MATCHED rows by default and would happily pass both.
+
+**31.4 images/post.php is unreachable in the PHP, and is not implemented.** Reached as an
+RPC module, it would run after restdx's body-based auth: a multipart request has no JSON
+body, so `$data` is null, `where restkey = ''` matches nothing, and the switch never runs.
+Even authenticated, `post.php` only acts inside `if (is_uploaded_file(...))`, which a JSON
+request cannot satisfy. So **every** path through it emits an empty 200.
+`ImagesModule` therefore implements nothing and exists only so `/backend/images/` answers an
+empty 200 like production instead of a 404. Its different naming scheme
+(`uniqid() . '_' . originalName`, plus a stray `echo $upload_dir` before the JSON) is
+recorded here and would have to be ported with it if that route were ever made to work.
+
+**31.5 Spring's 1 MB multipart default would have broken parity.** PHP's `php.ini` defaults
+are `upload_max_filesize=2M` / `post_max_size=8M`; Spring Boot defaults to 1 MB per file. A
+port that left the default in place would start rejecting 1–1.5 MB photos the PHP accepted,
+which the client would surface as a generic failure. `application.yml` now sets 2 MB / 8 MB
+deliberately.
+
+**31.6 Deliberate divergence — no directory configured.** The PHP would compute
+`$par['fileLocation'] . $img_name` from an undefined array key, producing a bare relative
+path, and try to write it into its own working directory. This port answers **204** (a failed
+move) and logs an error instead of scattering files into the JVM's CWD. The directory comes
+from `params.fileLocation` exactly like the PHP, overridden by `WLWL_UPLOAD_DIR` /
+`wlwl.upload.dir` — because the production parameter holds a **Windows** path and the service
+runs on Linux. The DB value is concatenated verbatim (no separator added) to match the PHP;
+the override gets a separator appended when missing, since it is a deployment setting.
+
+**31.7 Test hazard: the suite shares one in-memory database.** Both upload test classes hit
+`jdbc:h2:mem:wlwl;DB_CLOSE_DELAY=-1`, so one test's upload can silence another's auth via the
+second-resolution quirk (it did: two tests failed with 200 instead of 204). Both classes
+therefore pin `usedOn` to an old value in `@BeforeEach`. Any new test that authenticates must
+do the same, or use a different `restkey`.
