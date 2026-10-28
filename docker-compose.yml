@@ -1,0 +1,71 @@
+# Local / development stack: the ported backend plus a MySQL 8 it can talk to.
+#
+#   docker compose up -d --build
+#   curl -i -X POST http://127.0.0.1:8080/backend/drill -d '{}'   # 200 + empty body = auth gate working
+#
+# This file loads db/schema.sql AND db/seed-dev.sql (synthetic fixtures: fake
+# companies pkg1..pkg5, fake staff). It is NOT the production deployment recipe.
+# For a real database, load db/schema.sql only, then import the legacy data with
+# mysqldump --no-create-info (see db/migrate.sh --help) — never the dev seed.
+#
+# MySQL is pinned to utf8mb3 to match production (every table is CHARSET=utf8mb3
+# and the PHP connected with SET NAMES utf8 == utf8mb3). A utf8mb4 server here
+# would make local behaviour differ from the box being replaced.
+
+services:
+  db:
+    image: mysql:8.0
+    command:
+      - --character-set-server=utf8mb3
+      - --collation-server=utf8mb3_general_ci
+      # Forces the server charset onto clients that ask for utf8mb4, which is
+      # what production does to the PHP connection. Keeps 4-byte characters
+      # behaving the same locally as on the real box.
+      - --skip-character-set-client-handshake
+    environment:
+      MYSQL_DATABASE: wlwl
+      MYSQL_USER: wlwl
+      MYSQL_PASSWORD: ${DB_PASSWORD:-wlwl-dev-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-dev-password}
+    # schema.sql is additive (CREATE TABLE IF NOT EXISTS, no DROPs) so it is safe
+    # as an init script; the seed runs only on a fresh volume, by design.
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./db/seed-dev.sql:/docker-entrypoint-initdb.d/20-seed-dev.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    ports:
+      # Exposed for db/migrate.sh and ad-hoc mysql client work from the host.
+      - "${DB_PORT:-3306}:3306"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wlwl-backend:local
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: wlwl
+      DB_USER: wlwl
+      DB_PASSWORD: ${DB_PASSWORD:-wlwl-dev-password}
+      DB_TZ: Asia/Shanghai
+      WLWL_UPLOAD_DIR: /data/uploads
+      TZ: Asia/Shanghai
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  dbdata:
+  uploads:

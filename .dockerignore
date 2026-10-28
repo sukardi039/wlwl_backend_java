@@ -1,0 +1,16 @@
+# Keep the build context to what the Dockerfile actually reads.
+# Everything here is either regenerated in the image or irrelevant to it.
+.git
+.github
+target
+docs
+db
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml
+compose.yaml
+.idea
+.vscode
+*.iml
+*.log

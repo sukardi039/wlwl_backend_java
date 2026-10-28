@@ -75,6 +75,7 @@ target server except the JRE:
 | push to any branch / PR | `mvn -B verify` on JDK 21 (Temurin) with Maven cache; the jar is uploaded as the `wlwl-backend-jar` artifact (30 days) |
 | any failure | `surefire-reports/` is uploaded as an artifact so the failing parity test is readable in the UI |
 | push a tag `v*` | the same verified jar is attached to a generated GitHub Release, so the server pulls a release asset instead of compiling |
+| every push (after `verify`) | the `docker` job builds the image and smoke-tests it: container must run as UID 10001, reach `healthy` with **no database**, and still answer `POST /backend/drill` without a `restkey` with an empty `200` |
 
 To ship a build:
 
@@ -91,6 +92,55 @@ java -jar wlwl-backend-0.1.0-SNAPSHOT.jar
 The workflow needs no secrets: the parity suite runs entirely on in-memory H2, and
 database credentials are only ever supplied at runtime through the environment. The
 `contents: write` permission exists solely to create the Release on a tag.
+
+## Docker
+
+The container is a **packaging option, not a change to the contract**: it sets only
+the environment variables `application.yml` already reads (`DB_*`, `PORT`,
+`WLWL_UPLOAD_DIR`, `TZ`) and adds no endpoint, header or path. The same image is
+therefore cutover-equivalent to pulling the jar from a Release.
+
+```bash
+# image only
+docker build -t wlwl-backend:0.1.0 .
+
+# image build that also gates on the parity suite (skipped by default; CI runs it)
+docker build -t wlwl-backend:0.1.0 --build-arg MVN_ARGS="-B verify" .
+
+# run it against a database
+docker run -d --name wlwl -p 8080:8080 \
+  -e DB_HOST=host.docker.internal -e DB_PORT=3306 -e DB_NAME=wlwl \
+  -e DB_USER=wlwl -e DB_PASSWORD=*** \
+  -e WLWL_UPLOAD_DIR=/data/uploads \
+  -v wlwl-uploads:/data/uploads \
+  wlwl-backend:0.1.0
+```
+
+| file | role |
+|---|---|
+| `Dockerfile` | two stages: `maven:3.9.9-eclipse-temurin-21` builds, `eclipse-temurin:21-jre-jammy` runs the fat jar; `pom.xml` is copied before `src/` so dependency downloads stay cached across source edits |
+| `.dockerignore` | keeps `target/`, `db/`, `docs/` and `.git/` out of the build context |
+| `docker-compose.yml` | **local/dev only**: the app plus `mysql:8.0` pinned to `utf8mb3`, with `db/schema.sql` + `db/seed-dev.sql` as init scripts |
+
+Things that are deliberate, not defaults worth "fixing":
+
+- **`TZ=Asia/Shanghai`.** The PHP ran on a Windows/IIS host in Asia/Shanghai and
+  writes local-time `DATETIME`s. The JVM reads `TZ`, so this keeps date results
+  identical to production. Changing it changes stored times.
+- **`WLWL_UPLOAD_DIR=/data/uploads`.** In production `params.fileLocation` holds a
+  *Windows* path, so it is useless on Linux; this override wins before the DB lookup.
+  Mount a volume there or uploads are lost when the container is recreated.
+- **Runs as UID 10001, not root.** Mount the upload volume with matching ownership
+  (`--user 10001` is already the default inside the image).
+- **`HEALTHCHECK` probes an unknown module and expects `404`.** That path is answered
+  by the dispatcher *before any database access*, so it proves the HTTP stack and
+  gateway are up without consuming a connection or polluting logs. **It is a
+  liveness probe** — the container reports `healthy` even when MySQL is down. No
+  Spring Actuator dependency was added on purpose: it would create a route surface
+  (`/actuator/**`) that the PHP never had.
+- **Tests are not run in the image build.** `mvn verify` (254 tests) runs in the CI
+  `verify` job; duplicating it in every layer rebuild is wasted time. Use
+  `--build-arg MVN_ARGS="-B verify"` when you want the image to be the gate.
 
 ## Database: schema and seed
 

@@ -82,3 +82,56 @@ jobs:
         with:
           files: dist/wlwl-backend-*.jar
           generate_release_notes: true
+
+  # Keeps the Dockerfile honest. Building it here means a broken base image,
+  # a bad COPY path or a dependency that no longer resolves fails CI instead of
+  # failing on the server at cutover. The image build skips the test suite
+  # (MVN_ARGS default) because `verify` above already ran it — this job is about
+  # packaging, not parity.
+  docker:
+    name: docker image builds and starts
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: wlwl-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # Deliberately starts with NO database: the image must boot anyway and
+          # the healthcheck must not depend on MySQL being up.
+          docker run -d --name wlwl-ci -p 8080:8080 \
+            -e DB_HOST=127.0.0.1 -e DB_PORT=3306 -e WLWL_UPLOAD_DIR=/data/uploads \
+            wlwl-backend:ci
+
+          echo "--- runs as non-root ---"
+          test "$(docker exec wlwl-ci id -u)" = "10001"
+
+          echo "--- healthcheck ---"
+          for i in $(seq 1 40); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' wlwl-ci || echo starting)"
+            echo "  attempt $i: $status"
+            [ "$status" = "healthy" ] && break
+            sleep 3
+          done
+          test "$status" = "healthy"
+
+          echo "--- RPC contract unchanged ---"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST http://127.0.0.1:8080/backend/drill -d '{}')
+          echo "  POST /backend/drill without restkey -> $code (PHP: empty 200)"
+          test "$code" = "200"
+
+          docker logs wlwl-ci | tail -20
+          docker rm -f wlwl-ci
