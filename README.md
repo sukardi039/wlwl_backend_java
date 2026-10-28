@@ -15,7 +15,7 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **240 passing** (`mvn test`, 32 test classes, verified 2026-10-28) |
+| Tests | **239 passing** (`mvn verify`, 31 test classes, verified 2026-10-28) |
 
 Not fully ported yet:
 
@@ -64,6 +64,33 @@ Health check (any unknown module returns 404 once the server is up):
 ```bash
 curl -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/backend/probe/
 ```
+
+## Build and deploy via the GitHub repo
+
+`.github/workflows/ci.yml` is the delivery path — nothing needs to be built on the
+target server except the JRE:
+
+| trigger | what happens |
+|---|---|
+| push to any branch / PR | `mvn -B verify` on JDK 21 (Temurin) with Maven cache; the jar is uploaded as the `wlwl-backend-jar` artifact (30 days) |
+| any failure | `surefire-reports/` is uploaded as an artifact so the failing parity test is readable in the UI |
+| push a tag `v*` | the same verified jar is attached to a generated GitHub Release, so the server pulls a release asset instead of compiling |
+
+To ship a build:
+
+```bash
+# 1. bump the version in pom.xml if this is a real release (it ships as
+#    wlwl-backend-<version>.jar, currently 0.1.0-SNAPSHOT)
+# 2. tag and push
+git tag v0.1.0 && git push origin v0.1.0
+# 3. on the server: download the asset from the Release page, then run it with
+export DB_HOST=... DB_PORT=3306 DB_NAME=wlwl DB_USER=... DB_PASSWORD=...
+java -jar wlwl-backend-0.1.0-SNAPSHOT.jar
+```
+
+The workflow needs no secrets: the parity suite runs entirely on in-memory H2, and
+database credentials are only ever supplied at runtime through the environment. The
+`contents: write` permission exists solely to create the Release on a tag.
 
 ## The contract being preserved
 
