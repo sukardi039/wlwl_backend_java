@@ -154,6 +154,7 @@ the diagnosis is always in the final `Caused by:` line:
 | `CommunicationsException: Communications link failure` / `Connection refused` | The name resolved but nothing is listening: wrong port, MySQL still starting, or it only listens on a socket. `docker compose logs db` should show `ready for connections`. |
 | `Access denied for user 'x'@'y'` | Credentials or database name. `MYSQL_USER`/`MYSQL_PASSWORD` only take effect when the `dbdata` volume is **first** created; changing them afterwards does nothing to an existing volume. |
 | `Unknown database 'wlwl'` | Schema never applied — check the init scripts ran (they only run on an empty volume; `docker compose down -v` to redo). |
+| `Table 'wlwl.backenduser' doesn't exist` | The database exists but holds no tables. `MYSQL_DATABASE` creates only the empty schema; the tables come from `db/schema.sql`, and `docker-entrypoint-initdb.d` scripts run **once**, when the data directory is brand new. Apply it now — `db/schema.sql` is additive (no `DROP`), so this is safe on a populated database: `docker compose exec -T db mysql -uroot -p"$MYSQL_ROOT_PASSWORD" wlwl < db/schema.sql`, then confirm with `./db/migrate.sh --check` (must print `tables: 40`, `views: 5`, `OK`). |
 
 Diagnostics that distinguish these in one step:
 
