@@ -258,7 +258,11 @@ public class StaffsigninModule implements ModuleHandler {
     // Ported literally rather than dropped, because "nothing silently omitted" is a
     // hard requirement. The statement against the missing table throws, which the
     // gateway turns into a 500 — matching the PHP's fatal mysqli_fetch_assoc(false).
-    // Flagged in the ledger for an explicit ruling.
+    //
+    // RULED 2026-10-28: keep it. The 500 is the honest answer for a request the client
+    // can never make (the Vue app sends only POST/GET/DELETE/GETAUTH/CHKAUTH here), and
+    // if a "tasks" table ever appears the branch starts working instead of lying.
+    // Asserted by StaffsigninParityTest.putHitsMissingTable.
 
     @Override
     public void onPut(RpcContext ctx) throws Exception {
