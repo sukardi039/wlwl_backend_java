@@ -893,7 +893,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/commonLib.php` | 775 | **complete — 22 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
-| `drill/action.php` | 891 | **PARTIAL** — SELECT_STYLE ported + tested; other branches answer 501 |
+| `drill/action.php` | 891 | **PARTIAL** — `SELECT_STYLE` ported + tested; `MORE_ACTIONS` passes 1–2 (`applyRecruits`, `applySwapTask`) written + unit-tested but **not wired into the dispatch**; passes 3–5 unported, so every non-`SELECT_STYLE` action answers 501 |
 | `drill/bossreview.php` | 108 | **ported + tested** (`BossReviewTest`, 4 cases) |
 | `drill/post.php` | 60 | **ported + tested** (`DrillPostParityTest`, 6 cases) — POST verb, query string = userId |
 
@@ -902,8 +902,9 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 `highMorale`, `lowMorale`, `cal_impacts`, `cal_affect`, `writeSummary` (plus helpers
 `truthy`, `named`, `hasName`, `isStrictlyZero`, `extreme`, `Pick`).
 
-`DrillCommon` is COMPLETE: all 22 commonLib functions are ported, so the only thing left
-in `drill/` is `action.php` itself (plus `bossreview.php`, which is only reached from it).
+`DrillCommon` is COMPLETE: all 22 commonLib functions are ported, and `bossreview.php` is
+ported too, so the only thing left in `drill/` is `action.php`'s `MORE_ACTIONS` branch —
+see §29 for its five-pass decomposition and current state.
 
 Notable gap inside a ported function:
 
@@ -1189,8 +1190,9 @@ Three parts, only the middle one differs per move:
    product's task weights (only the PHP's dead `if (false)` block reads them), read
    params_int, `json_decode` the content, look up `action` by `content.control.action`,
    `initMemberValues`, clear `touched` on every slot.
-2. **`switch ($qdata->action)`** — SELECT_STYLE (ported), MORE_ACTIONS, recruit/sack/swap/
-   evaluate (not yet; they answer 501 with the branch name).
+2. **`switch ($qdata->action)`** — SELECT_STYLE (ported), MORE_ACTIONS (in progress, §29).
+   There are only these two branches; `qdata.action` is set by the client from the previous
+   step's `control.action`, so anything else is a client bug and gets 501 with the name.
 3. **Shared tail** — `weekSummary`, `writeSummary`, clear `actioned`/`actionExp`, mint the
    next `drillDetailId`, `stepNumber++`, `dayNumber++`, `welcome=0`, choose the NEXT action
    from `day[newDay].evaluateStyle`, run the status ladder (600 celebrate / 700 out of days
