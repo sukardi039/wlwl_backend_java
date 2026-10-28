@@ -142,6 +142,31 @@ Things that are deliberate, not defaults worth "fixing":
   `verify` job; duplicating it in every layer rebuild is wasted time. Use
   `--build-arg MVN_ARGS="-B verify"` when you want the image to be the gate.
 
+### When a request 500s, read the last `Caused by`
+
+The port answers a failed query with a 500 and a stack trace, which is what the PHP
+did when `mysqli_query` returned false (IIS surfaced it as 500). That is intended, so
+the diagnosis is always in the final `Caused by:` line:
+
+| last `Caused by` | meaning |
+|---|---|
+| `java.net.UnknownHostException: mysql` | DNS only — no such host *visible from this container*. Not credentials, not a firewall. The name must match the database service (`db` here, also aliased `mysql`) and both containers must share one user-defined network. A container started with plain `docker run` joins the default `bridge` network, where **service names never resolve** — create a network and attach both. |
+| `CommunicationsException: Communications link failure` / `Connection refused` | The name resolved but nothing is listening: wrong port, MySQL still starting, or it only listens on a socket. `docker compose logs db` should show `ready for connections`. |
+| `Access denied for user 'x'@'y'` | Credentials or database name. `MYSQL_USER`/`MYSQL_PASSWORD` only take effect when the `dbdata` volume is **first** created; changing them afterwards does nothing to an existing volume. |
+| `Unknown database 'wlwl'` | Schema never applied — check the init scripts ran (they only run on an empty volume; `docker compose down -v` to redo). |
+
+Diagnostics that distinguish these in one step:
+
+```bash
+docker compose exec app getent hosts db          # empty output = DNS problem
+docker compose exec app curl -sS -o /dev/null -w '%{http_code}\n' \
+  http://127.0.0.1:8080/backend/__probe__         # 404 = HTTP stack is fine
+docker compose logs db | tail -5                  # is MySQL actually up?
+```
+
+Timestamps in the log carrying `+08:00` are expected — that is `TZ=Asia/Shanghai`
+doing its job for date parity, not a symptom.
+
 ## Database: schema and seed
 
 `db/` contains the database half of the deliverable. The schema is **generated from the

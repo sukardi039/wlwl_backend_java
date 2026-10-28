@@ -39,6 +39,14 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
+    networks:
+      default:
+        # The service is called `db`, but plenty of hand-written run commands and
+        # a lot of tutorials assume the host is `mysql`. Answering to both means
+        # DB_HOST=db and DB_HOST=mysql both work inside this network, instead of
+        # failing with java.net.UnknownHostException: mysql.
+        aliases:
+          - mysql
     ports:
       # Exposed for db/migrate.sh and ad-hoc mysql client work from the host.
       - "${DB_PORT:-3306}:3306"
