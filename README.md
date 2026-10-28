@@ -36,8 +36,9 @@ See `../wlwl_parity_ledger.md`.
    "Rulings needed" (`basicinformation/x_post.php`, `staffsignin/post_xxx.php`,
    `backenduser/post_saved_20231209.php`, and whether to keep `staffsignin/put.php`'s
    500-for-parity branch).
-3. **Packaging** — no Dockerfile, CI workflow or seed/migration script exists; the
-   deliverable is currently a jar plus env-var configuration.
+3. **Packaging** — done: `.github/workflows/ci.yml` builds, verifies and publishes the
+   jar from the repo (tag `v*` → GitHub Release asset). Still absent, and optional: a
+   Dockerfile and a seed/migration script.
 4. **Frontend endpoints with no backend at all** — `idx_baseinfo`, `idx_baseclass`,
    `idx_staff`, `idx_profileclass`, `student` (15 call sites) 404 in PHP production today;
    the port reproduces that 404. Product decision whether those features stay missing.
