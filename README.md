@@ -37,8 +37,8 @@ See `../wlwl_parity_ledger.md`.
    `backenduser/post_saved_20231209.php`, and whether to keep `staffsignin/put.php`'s
    500-for-parity branch).
 3. **Packaging** — done: `.github/workflows/ci.yml` builds, verifies and publishes the
-   jar from the repo (tag `v*` → GitHub Release asset). Still absent, and optional: a
-   Dockerfile and a seed/migration script.
+   jar from the repo (tag `v*` → GitHub Release asset); `db/` provides the schema, a dev
+   seed and `migrate.sh`, with both SQL files and the script self-tested in CI.
 4. **Frontend endpoints with no backend at all** — `idx_baseinfo`, `idx_baseclass`,
    `idx_staff`, `idx_profileclass`, `student` (15 call sites) 404 in PHP production today;
    the port reproduces that 404. Product decision whether those features stay missing.
@@ -92,6 +92,44 @@ java -jar wlwl-backend-0.1.0-SNAPSHOT.jar
 The workflow needs no secrets: the parity suite runs entirely on in-memory H2, and
 database credentials are only ever supplied at runtime through the environment. The
 `contents: write` permission exists solely to create the Release on a tag.
+
+## Database: schema and seed
+
+`db/` contains the database half of the deliverable. The schema is **generated from the
+production `mysqldump --no-data`** (MySQL 8.0.40, 40 tables + 5 views), never retyped.
+
+```bash
+export DB_HOST=127.0.0.1 DB_PORT=3306 DB_NAME=wlwl DB_USER=root DB_PASSWORD=***
+
+./db/migrate.sh --schema        # create missing tables/views — safe, repeatable
+./db/migrate.sh --check         # report 40 tables / 5 views, change nothing
+./db/migrate.sh --seed --dev    # load synthetic DEV rows (refused if the DB has data)
+./db/migrate.sh --dry-run       # print what would happen, touch nothing
+```
+
+| file | role |
+|---|---|
+| `db/schema.sql` | generated: 40 tables, 5 views, 363 columns, 34 FKs, `utf8mb3` |
+| `db/seed-dev.sql` | synthetic dev rows from the H2 fixture — **never for production** |
+| `db/migrate.sh` | applies them; password goes via a 0600 defaults-file, not `argv` |
+| `db/tools/from-dump.py` | regenerates `schema.sql` from a dump |
+| `db/tools/make-seed.py` | regenerates the seed and checks every column against the schema |
+| `db/tools/check-sql.py` | CI: both files parse as MySQL, counts, no `DROP` in schema |
+| `db/tools/test-migrate.sh` | CI: 9 assertions on `migrate.sh`, needs no database |
+
+Two deliberate differences from the raw dump: its `DROP TABLE IF EXISTS` statements are
+removed (they would destroy a live database — `check-sql.py` fails the build if one
+reappears), and view `DEFINER=`root`@`localhost`` is stripped. Everything else, including
+`AUTO_INCREMENT` counters and column order, is verbatim — column order matters because the
+backend has ~52 `SELECT *` paths.
+
+**For a production cutover, schema comes from `db/schema.sql` and data comes from the
+legacy database** — `seed-dev.sql` is fixtures:
+
+```bash
+mysqldump --no-create-info --complete-insert wlwl > wlwl-data.sql
+mysql wlwl < wlwl-data.sql
+```
 
 ## The contract being preserved
 

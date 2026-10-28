@@ -257,15 +257,18 @@ create table taskefficiency (
   taskEfficiencyId int not null auto_increment primary key,
   productName      varchar(100) not null,
   taskName         varchar(100) not null,
-  efficiency       decimal(5,2) default null,
   skillsWeight     decimal(6,2) default 0.50,
   moraleWeight     decimal(6,2) default 0.50,
   duration         decimal(6,2) default 1.00,
   taskDisplayName  varchar(100) default null,
   passingRate      decimal(6,2) default 1.00,
-  target           decimal(6,2) default 1.00
+  target           decimal(5,2) default 1.00
 );
-insert into taskefficiency (productName, taskName, efficiency) values ('W1', 'Inspect', 12.50);
+-- Production has NO `efficiency` column here (verified against the 2026-10-26 dump and
+-- wlwl_schema_real.md). A fixture-only `efficiency` column used to live in this table,
+-- which made basicinformation/task_eff echo a field production can never emit — its
+-- assertion now uses `target`, which does exist. decimal(6,2) -> JSON string "12.50".
+insert into taskefficiency (productName, taskName, target) values ('W1', 'Inspect', 12.50);
 
 create table environment (
   environmentName        varchar(100) not null primary key,

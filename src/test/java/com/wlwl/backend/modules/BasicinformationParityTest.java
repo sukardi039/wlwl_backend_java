@@ -173,7 +173,9 @@ class BasicinformationParityTest {
     @Test
     @DisplayName("task_eff nests the whole ROW two levels deep")
     void taskEffNestsRow() throws Exception {
-        call().andExpect(jsonPath("$.task_eff.W1.Inspect.efficiency").value("12.50"))
+        // The row is echoed verbatim by `select *`, so this is also a check that the
+        // fixture's columns match production: `target` exists, `efficiency` does not.
+        call().andExpect(jsonPath("$.task_eff.W1.Inspect.target").value("12.50"))
                 .andExpect(jsonPath("$.task_eff.W1.Inspect.taskname").value("Inspect"));
     }
 
