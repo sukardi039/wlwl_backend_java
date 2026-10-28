@@ -142,6 +142,37 @@ Things that are deliberate, not defaults worth "fixing":
   `verify` job; duplicating it in every layer rebuild is wasted time. Use
   `--build-arg MVN_ARGS="-B verify"` when you want the image to be the gate.
 
+### Why the app does not create the schema itself
+
+Spring Boot only auto-creates tables in a **JPA/Hibernate** app (`ddl-auto`) or via
+`spring.sql.init.mode` + a classpath `schema.sql`. This port uses
+`spring-boot-starter-jdbc` with hand-written SQL, so there are no entities to derive
+a schema from, and `db/schema.sql` deliberately lives outside the jar (it is the
+production dump, not application code).
+
+Turning on `spring.sql.init.mode=always` was measured, not assumed:
+
+| | database unreachable at boot |
+|---|---|
+| current | `Started WlwlApplication in 4.899 seconds` — server up, requests get the PHP-faithful 500 |
+| with `spring.sql.init.mode=always` | `Failed to execute database script` → `Connection refused` → **startup aborts**, exit 1 |
+
+So auto-init would make liveness depend on MySQL (it would also fail the CI smoke
+test, which runs the container with no database), and it would put `CREATE TABLE`
+statements against a live production schema on every boot. Parity is the point here:
+the PHP never created tables either.
+
+Use the `db-init` one-shot service instead when a database exists but has no tables
+— it applies `db/schema.sql` once, on demand, and never runs during `up`:
+
+```bash
+docker compose --profile init run --rm db-init
+docker compose exec db mysql -uroot -p"$MYSQL_ROOT_PASSWORD" wlwl -e 'show tables' | wc -l
+```
+
+`schema.sql` uses `CREATE TABLE IF NOT EXISTS` / `CREATE OR REPLACE VIEW` and contains
+no `DROP`, so it is safe to re-run and safe on a database that already holds rows.
+
 ### When a request 500s, read the last `Caused by`
 
 The port answers a failed query with a 500 and a stack trace, which is what the PHP

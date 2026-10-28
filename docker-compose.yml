@@ -51,6 +51,35 @@ services:
       # Exposed for db/migrate.sh and ad-hoc mysql client work from the host.
       - "${DB_PORT:-3306}:3306"
 
+  # One-shot schema applier for an EXISTING database (the case where the dbdata
+  # volume was created before db/schema.sql was mounted, so MySQL's
+  # docker-entrypoint-initdb.d scripts never ran — that is what produces
+  # "Table 'wlwl.backenduser' doesn't exist").
+  #
+  #   docker compose --profile init run --rm db-init
+  #   docker compose exec db mysql -uroot -p"$MYSQL_ROOT_PASSWORD" wlwl -e "show tables" | wc -l
+  #
+  # schema.sql is additive (CREATE TABLE IF NOT EXISTS, CREATE OR REPLACE VIEW,
+  # no DROP), so running this repeatedly is safe, including on populated data.
+  # Kept OUT of the default profile so `docker compose up` never touches a
+  # database that may hold real rows.
+  db-init:
+    image: mysql:8.0
+    profiles: ["init"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Passed via the environment, never argv, so it stays out of `ps`.
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:-root-dev-password}
+    volumes:
+      - ./db/schema.sql:/schema.sql:ro
+    entrypoint:
+      - sh
+      - -c
+      - exec mysql --host=db --user=root wlwl < /schema.sql
+    restart: "no"
+
   app:
     build:
       context: .
