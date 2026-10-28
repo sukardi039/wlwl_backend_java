@@ -1304,6 +1304,21 @@ covered), the fixture's `target` is now `decimal(5,2)` as in production, and the
 reads `$.task_eff.W1.Inspect.target`. No production code changed — the bug was in the test
 fixture and the test, which together had invented a field. The suite still passes 239 tests.
 
+**30.5a Schema parity is a test, not a claim.** `db/tools/check-schema-parity.py`
+parses DDL with `db/tools/schema_model.py` (stdlib only) and diffs `db/schema.sql` against
+a reference at two tiers. Tier A takes a real `mysqldump --no-data` and compares every
+table, column (in order), type, nullability, default, extra, key, unique, foreign key and
+its ON DELETE/UPDATE rule, table option and view body — 1823 assertions on this schema.
+Tier B takes `db/reference/wlwl_schema_real.md` (the condensed dump summary, copied into
+the repo so CI is self-contained) and asserts only what that summary states; anything it
+does not state (the `bossreview` column types, `competency.drillId`, `staffx`'s column
+list) is printed as UNVERIFIED and never counted as parity. `--self-test` mutation-tests
+the comparators: 14 injected defects (dropped column, renamed column, widened varchar,
+NULL flip, changed default, added column, dropped FK, changed FK rule, swapped column
+order, changed PK, dropped unique key, utf8mb3→utf8mb4, dropped view, changed view body)
+plus two clean-file cases must all behave. Column reordering is in that list because
+150 `SELECT *` paths make order part of the wire format.
+
 **30.5 Residual fixture/production type drift is intentional.** The H2 fixture still
 differs from production in types it does not need to match exactly:
 `taskefficiency.taskEfficiencyId` is `int` (production `bigint`), and `passingRate` is

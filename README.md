@@ -116,6 +116,9 @@ export DB_HOST=127.0.0.1 DB_PORT=3306 DB_NAME=wlwl DB_USER=root DB_PASSWORD=***
 | `db/tools/check-sql.py` | CI: both files parse as MySQL, counts, no `DROP` in schema |
 | `db/tools/check-sql-usage.py` | CI: every table/column the JAVA queries mention exists in `schema.sql` |
 | `db/tools/test-migrate.sh` | CI: 9 assertions on `migrate.sh`, needs no database |
+| `db/tools/check-schema-parity.py` | CI: proves `schema.sql` is structurally identical to the original database |
+| `db/tools/schema_model.py` | the DDL parser that check uses (stdlib only, no server) |
+| `db/reference/wlwl_schema_real.md` | the condensed `--no-data` dump summary, used as the tier-B reference |
 
 Two deliberate differences from the raw dump: its `DROP TABLE IF EXISTS` statements are
 removed (they would destroy a live database — `check-sql.py` fails the build if one
@@ -123,8 +126,32 @@ reappears), and view `DEFINER=`root`@`localhost`` is stripped. Everything else, 
 `AUTO_INCREMENT` counters and column order, is verbatim — column order matters because the
 backend has ~52 `SELECT *` paths.
 
-**For a production cutover, schema comes from `db/schema.sql` and data comes from the
-legacy database** — `seed-dev.sql` is fixtures:
+The port's correctness argument is 1:1 parity, and the database is part of the contract —
+column *order* alone is load-bearing, because ~150 `SELECT *` paths turn column order into
+JSON key order. `db/tools/check-schema-parity.py` asserts that `schema.sql` is structurally
+identical to the original database, at two strengths:
+
+```bash
+# tier A (authoritative): exact diff against a real dump of the original database
+mysqldump --no-data --skip-dump-date wlwl > /tmp/prod-schema.sql   # on the prod host
+./db/tools/check-schema-parity.py --dump /tmp/prod-schema.sql
+
+# tier B (what CI can run): diff against the condensed dump summary in db/reference/
+./db/tools/check-schema-parity.py --allow-unverified
+./db/tools/check-schema-parity.py --self-test     # proves the checker catches drift
+```
+
+Tier A compares every table, column (in order), type, nullability, default, `AUTO_INCREMENT`,
+key, foreign key and rule, table option, and view body. Tier B asserts what the summary
+actually states and prints anything it does not state as **UNVERIFIED** rather than assuming
+it matches.
+
+**In production this file is a bootstrap, not a migration.** The legacy MySQL instance
+already has these 40 tables, so the normal cutover is to point the new jar at it and run
+nothing from `db/`. `schema.sql` is only executed when standing up a *fresh, empty*
+instance; because every statement is `CREATE TABLE IF NOT EXISTS` / `CREATE OR REPLACE
+VIEW`, running it against the legacy database is a no-op rather than a rewrite. Data
+always comes from the legacy database — `seed-dev.sql` is fixtures:
 
 ```bash
 mysqldump --no-create-info --complete-insert wlwl > wlwl-data.sql
