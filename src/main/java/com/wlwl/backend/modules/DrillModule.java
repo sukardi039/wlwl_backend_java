@@ -29,10 +29,10 @@ import java.util.Map;
  *   anything else                                                -> echoes "No Mod"
  *   falsy                                                        -> emits nothing at all
  *
- * Ported: INIT, ENVIRONMENT, RESET, TIMEOUT, UPDATENAME — plus the POST verb
- * (drill/post.php), which ignores `mod` entirely and keys on the query string. ACTION is
- * still 501 with the mod name in the body: deliberately loud, because a silent "No Mod" or
- * an empty 200 would make an unported branch look like a working one.
+ * Ported: INIT, ENVIRONMENT, RESET, TIMEOUT, UPDATENAME, ACTION (both branches) — plus the
+ * POST verb (drill/post.php), which ignores `mod` entirely and keys on the query string.
+ * `drill/` is complete; an unknown `mod` still answers 501 with the name in the body,
+ * deliberately loud, because a silent "No Mod" or an empty 200 would hide a client bug.
  *
  * TIMEOUT (drill/timeout.php, 29 lines) is client-triggered: the browser notices expiry and
  * submits. It refuses to write if the last row already ended the drill, but still returns

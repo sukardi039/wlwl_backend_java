@@ -28,7 +28,9 @@ import java.util.Map;
  *      recompute the status ladder (including assigning staff to the new day's events),
  *      persist and answer.
  *
- * Every other branch returns 501 with the branch name, loudly, until it is ported.
+ * The switch has exactly the two branches the client ever sends — SELECT_STYLE and
+ * MORE_ACTIONS — and both are ported. Anything else is a client bug and answers 501 with the
+ * name in the body, loudly, because a silent "No Mod" or an empty 200 would hide it.
  */
 public final class DrillAction {
 
