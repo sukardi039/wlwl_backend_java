@@ -114,6 +114,7 @@ export DB_HOST=127.0.0.1 DB_PORT=3306 DB_NAME=wlwl DB_USER=root DB_PASSWORD=***
 | `db/tools/from-dump.py` | regenerates `schema.sql` from a dump |
 | `db/tools/make-seed.py` | regenerates the seed and checks every column against the schema |
 | `db/tools/check-sql.py` | CI: both files parse as MySQL, counts, no `DROP` in schema |
+| `db/tools/check-sql-usage.py` | CI: every table/column the JAVA queries mention exists in `schema.sql` |
 | `db/tools/test-migrate.sh` | CI: 9 assertions on `migrate.sh`, needs no database |
 
 Two deliberate differences from the raw dump: its `DROP TABLE IF EXISTS` statements are

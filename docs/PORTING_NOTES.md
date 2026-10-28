@@ -1448,3 +1448,24 @@ fixture now sets both sets.
 $action['duration'])` per acting member; the shared tail still advances the day by exactly
 one and then subtracts `(daysNeeded - 1)` from `control.numberOfDays`. A duration of 0 (the
 column default) is harmless because the max starts at 0.
+
+**30.7 The Java's SQL is cross-checked against the schema (`check-sql-usage.py`).**
+Behavioural parity does not prove SQL correctness: the suite runs on H2 with a fixture
+that is only a slice of production, so a query can be wrong against the real schema and
+still pass every test. That is exactly how the phantom `taskefficiency.efficiency` column
+survived (§30.4). `db/tools/check-sql-usage.py` (in CI) reassembles the `+`-joined SQL
+literals from `src/main/java`, parses them as MySQL and verifies that every referenced
+table, every `alias.column` and every `UPDATE ... SET` column exists in `db/schema.sql`,
+plus unqualified columns when a statement touches exactly one table. Current result:
+**233 SQL literals, 406 column references verified, 0 unknown tables, 0 unknown columns.**
+
+Deliberate exceptions the tool knows about: `tasks` (the ruled-dead staffsignin/put.php
+branch, §31) is allow-listed, and the 6 statements it cannot parse are the dynamic ones —
+`profileclass`'s client-chosen table and the `impactprofile_view`/`staffprofile_view`
+name passed as a parameter. If you add a query with a runtime table name, it will show up
+in that "not parseable" list, which is the reminder to keep the guard in place.
+
+It is a static check, not a substitute for a rehearsal against a real MySQL instance:
+values, column types and MySQL-vs-H2 semantics are out of scope. Table names are all
+lowercase in the queries, which matters because the legacy server was Windows MySQL
+(case-insensitive) and a Linux MySQL is case-sensitive.

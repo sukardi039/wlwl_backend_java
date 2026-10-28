@@ -36,6 +36,9 @@ jobs:
           python3 -m pip install --quiet sqlglot
           python3 db/tools/check-sql.py
 
+      - name: Cross-check the SQL embedded in Java against the schema
+        run: python3 db/tools/check-sql-usage.py
+
       - name: Self-test db/migrate.sh (no database needed)
         run: ./db/tools/test-migrate.sh
 
