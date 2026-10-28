@@ -9,19 +9,19 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **32 of 34** — plus 2 dropped by ruling (`signin`, `messages`); `drill` is the only module still in progress (all of it ported except `mod=ACTION`'s `MORE_ACTIONS` branch, see `docs/PORTING_NOTES.md` §21 and §29) |
+| Modules ported | **32 of 32 live modules** — 2 more dropped by ruling (`signin`, `messages`). `drill/` is complete: 18 of 18 files, both `mod=ACTION` branches |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **250 passing** (`mvn verify`, 33 test classes, verified 2026-10-28) |
+| Tests | **254 passing** (`mvn verify`, 34 test classes, verified 2026-10-28) |
 
-Not fully ported yet:
+The largest module, and the only one that needed a decomposition plan:
 
 | module | status |
 |---|---|
-| `drill` (5,617 LOC; 2,798 live) | **IN PROGRESS** — 17 of 18 files done, including `commonLib` (22/22), `init`, `environment`, `timeout`, `reset`, `updatename`, `competency`, `bossreview`, `post`. Only `mod=ACTION`'s `MORE_ACTIONS` branch remains: passes 1–2 (`applyRecruits`, `applySwapTask`) are written and unit-tested but **not yet wired** into the dispatch; passes 3–5 are unported and answer 501 with the branch name. `mod=ACTION`'s `SELECT_STYLE` branch is done. Data blockers are cleared (two real drill dumps). |
+| `drill` (5,617 LOC; 2,798 live) | **PORTED + tested** — all 18 files, `commonLib` 22/22, and both `mod=ACTION` branches (`SELECT_STYLE`, `MORE_ACTIONS` incl. the evaluate path). The quirks reproduced there are listed in `docs/PORTING_NOTES.md` §32; read it before touching that branch. |
 | `signin` (144) | **DROPPED by ruling** — dead: no `wxuser`/`studentlist`/`tasks`, and 0 client call sites |
 | `messages` (51) | **DROPPED by ruling** — dead; risk accepted and logged (see ledger risk register R1–R4) |
 
@@ -29,9 +29,8 @@ See `../wlwl_parity_ledger.md`.
 
 ### Remaining work, as of 2026-10-28
 
-1. **`MORE_ACTIONS` passes 3–5** (`drill/action.php:179-738`) — the only unported
-   behaviour left. Then wire passes 1–2 into the dispatch (they exist and are unit-tested
-   but are currently reached only from tests).
+1. ~~**`MORE_ACTIONS` passes 3–5**~~ — **done**. Every backend module is now ported. What is
+   left is cutover work, not porting: see items 2–4.
 2. **Rulings pending** on the four dead/superseded PHP files listed in the ledger under
    "Rulings needed" (`basicinformation/x_post.php`, `staffsignin/post_xxx.php`,
    `backenduser/post_saved_20231209.php`, and whether to keep `staffsignin/put.php`'s

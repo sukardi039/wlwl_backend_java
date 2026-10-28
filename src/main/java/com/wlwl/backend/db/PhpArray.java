@@ -85,6 +85,36 @@ public final class PhpArray extends LinkedHashMap<Object, Object> {
 
     // ------------------------------------------------------------ mutation
 
+    /**
+     * PHP array assignment is a deep-enough COPY: {@code $cont = $content} then mutating
+     * {@code $cont} leaves {@code $content} untouched (copy-on-write). drill/action.php
+     * depends on it twice — the {@code $cont} probe that may be discarded, and
+     * cal_impacts' evaluate branch, which computes a swap on a copy and throws the
+     * numbers away. Java arrays are references, so the copy has to be explicit.
+     */
+    public PhpArray copy() {
+        PhpArray out = new PhpArray();
+        for (var entry : entrySet()) {
+            out.put(entry.getKey(), deepCopy(entry.getValue()));
+        }
+        return out;
+    }
+
+    private static Object deepCopy(Object value) {
+        if (value instanceof PhpArray nested) return nested.copy();
+        if (value instanceof java.util.List<?> list) {
+            java.util.List<Object> copy = new java.util.ArrayList<>(list.size());
+            for (Object item : list) copy.add(deepCopy(item));
+            return copy;
+        }
+        if (value instanceof java.util.Map<?, ?> map) {     // not expected, but be safe
+            PhpArray copy = new PhpArray();
+            for (var e : map.entrySet()) copy.put(e.getKey(), deepCopy(e.getValue()));
+            return copy;
+        }
+        return value;                                       // scalars are immutable
+    }
+
     @Override
     public Object put(Object key, Object value) {
         return super.put(key(key), value);

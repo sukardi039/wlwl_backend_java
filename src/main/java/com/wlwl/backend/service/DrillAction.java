@@ -50,11 +50,13 @@ public final class DrillAction {
         jdbc.update("update drilldetail set content = ?, updatedOn = now() where drillDetailId = ?",
                 rawContent, text(qdata, "drillDetailId"));
 
-        // task weights for this drill's product (only the dead `if (false)` block reads them)
-        Map<String, Object> ignoredEff = new LinkedHashMap<>();
+        // task weights for this drill's product: $eff[taskName] = row. Only the PHP's dead
+        // `if (false)` block reads the weights, but action.php's withTask branch does use
+        // the map's existence, and recal_eff() takes it — so it is loaded properly.
+        Map<String, Map<String, Object>> eff = new LinkedHashMap<>();
         for (Map<String, Object> r : PhpRows.query(jdbc, "select * from taskefficiency where "
                 + "productName = (select modelProduct from drill where drillId = ?)", drillId)) {
-            ignoredEff.put(str(PhpRows.get(r, "taskName")), r);
+            eff.put(str(PhpRows.get(r, "taskName")), r);
         }
 
         Map<String, Object> params = DrillCommon.readParams(jdbc);
@@ -64,6 +66,10 @@ public final class DrillAction {
         Map<String, Object> actionRow = firstRow(jdbc,
                 "select * from action where actionName = ?",
                 str(PhpJson.path(content, "control", "action")));
+        // PHP keeps one `$action` variable for the leader's action AND then overwrites it
+        // with each member's action row inside the MORE_ACTIONS loop. Everything after the
+        // loop therefore sees the LAST member's row. A slot models that shadowing.
+        ActionSlot slot = new ActionSlot(actionRow);
 
         DrillCommon.initMemberValues(content, params);
 
@@ -79,6 +85,21 @@ public final class DrillAction {
         switch (action) {
             case "SELECT_STYLE" -> daysNeeded = selectStyle(jdbc, content, qdata, drillId, params,
                     maxMembers, dayNumber, stepNumber, action, prf);
+            case "MORE_ACTIONS" -> {
+                // pass 1 and 2 of §29 run before the per-member loop, exactly like the PHP
+                applyRecruits(jdbc, content, params, actionRow, maxMembers);
+                applySwapTask(content, actionRow, maxMembers);
+                // pass 3: the per-member impact loop. It OVERWRITES $action on every
+                // iteration (the PHP reuses one variable), so the row that comes out is
+                // the LAST acted member's action — not the leader's. Passes 4-5 depend on
+                // that, so the slot is threaded through rather than reloaded.
+                slot.row = actionRow;
+                daysNeeded = applyMemberImpacts(jdbc, content, params, eff, slot,
+                        maxMembers, dayNumber, stepNumber, action, prf);
+                // pass 4: boss review, sack clean-up, emotion, orders, manpower
+                afterMemberImpacts(jdbc, content, params, eff, slot, maxMembers,
+                        dayNumber, stepNumber, action, prf);
+            }
             default -> {
                 ctx.text("drill action " + action + " is not ported yet");
                 ctx.status(501);
@@ -415,6 +436,625 @@ public final class DrillAction {
                 break;                          // one slot per recruit
             }
         }
+    }
+
+    /**
+     * case "MORE_ACTIONS", pass 4: everything the drill does to the world after the
+     * members' own impacts have been applied — the boss's reaction, sack clean-up, the
+     * emotion pass, day-away decay, order assignment/progress/status, and shorthanded
+     * detection.
+     *
+     * <p>Traps reproduced here:
+     *
+     * <ul>
+     *   <li><b>The boss-review guard reads the SHADOWED {@code $action}</b> — the last
+     *       acted member's action row, not the leader's. It is also inside a condition
+     *       that is always true in this branch
+     *       ({@code $qdata->action == 'MORE_ACTIONS' || ...}), so the only real test is
+     *       {@code !$action['noImpact']}.</li>
+     *   <li><b>{@code $contentr}</b> (sic) — the order-initialisation line writes
+     *       {@code assignedTo} into a NEW variable instead of {@code $content}, so a
+     *       fresh order never gets {@code assignedTo = ''}. Preserved by doing nothing:
+     *       the variable is discarded, so the only visible effect is that
+     *       {@code orders[d].state = 0} is the sole initialisation.</li>
+     *   <li><b>{@code $short} is one variable reused for every task</b> and reset inside
+     *       the {@code while} that loads the task list, so it ends up as the count of
+     *       short-handed tasks accumulated by the {@code foreach}.</li>
+     *   <li>The emotion checks other than "resigned" are NOT guarded by {@code staffName}.</li>
+     * </ul>
+     */
+    private static void afterMemberImpacts(JdbcTemplate jdbc, PhpArray content,
+                                           Map<String, Object> params,
+                                           Map<String, Map<String, Object>> eff,
+                                           ActionSlot slot, long maxMembers, long dayNumber,
+                                           Object stepNumber, String qdataAction,
+                                           Map<String, Object> prf) {
+        // ---- the boss reacts to the action profile ($prf is cal_impacts' last &$res)
+        if (num(rowGet(slot.row, "noImpact")) == 0) {          // !$action['noImpact']
+            Map<String, Object> action1 = firstRow(jdbc,
+                    "select * from action where actionName = ?",
+                    str(rowGet(prf, "impactClass")));
+            BossReview.run(jdbc, content, action1, qdataAction);
+        }
+
+        // ---- sacking removes the member and starts a recruiting embargo
+        if ("sack".equals(str(PhpJson.path(content, "control", "action")))) {
+            for (long c = 1; c <= maxMembers; c++) {
+                PhpArray m = member(content, c);
+                if (m == null || !hasName(m.get("staffName")) || !truthy(m.get("actioned"))) continue;
+
+                m.put("staffName", "");
+                m.put("staffExp", "");
+                m.put("actioned", 0L);
+                Object workingOn = m.get("workingOn");
+                if (num(workingOn) > 0) {
+                    content.child("orders").child(PhpArray.key(workingOn)).put("state", -1L);
+                }
+                m.put("listen", params.get("ignored_tolerance_days"));
+                m.put("attention", params.get("dejected_tolerance_days"));
+                m.put("attenWarning", params.get("dejected_warning_days"));
+                m.put("msgCount", 0L);
+                m.put("message", new PhpArray());
+                m.put("workingOn", 0L);
+                m.put("evaluated", 0L);
+                m.put("evalResult", "");
+                m.put("added", 0L);
+                m.put("addedAvg", 0L);
+                m.put("away", PhpJson.jsonNumber(PhpJson.round(rand(
+                        numLong(params.get("sack_embargo_min_days")),
+                        numLong(params.get("sack_embargo_max_days"))))));
+                m.put("touched", 0L);
+            }
+        }
+
+        // ---- emotion: resignation, being ignored, dejection, sick leave
+        long ignoredCount = 0;
+        long dejectedCount = 0;
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m == null) continue;
+
+            if (hasName(m.get("staffName")) && num(m.get("maxMorale")) > 5
+                    && num(m.get("moraleValue")) < 5) {
+                DrillCommon.setEnvironment(jdbc, content, "resigned", (int) c, dayNumber);
+            }
+
+            if (num(m.get("listen")) < 0) {
+                String emoExp = displayKey(jdbc, "ignored");
+                DrillCommon.calImpacts(jdbc, content, (int) c, "ignored", 1, 0, 0, 0);
+                DrillCommon.writeHistory(content, stepNumber, dayNumber, m.get("staffName"),
+                        m.get("staffExp"), qdataAction, emoExp,
+                        m.get("skillsAdded"), m.get("moraleAdded"), m.get("efficiencyAdded"),
+                        mutableChild(m, "message").get(PhpArray.key(m.get("msgCount"))));
+                appendActionExp(m, emoExp);
+                m.put("listen", params.get("ignored_tolerance_days"));
+                ignoredCount++;
+                m.put("emotion", 1L);
+            }
+
+            if (num(m.get("attenWarning")) < 0) {
+                String emoExp = displayKey(jdbc, "dejected");
+                DrillCommon.calImpacts(jdbc, content, (int) c, "dejected", 1, 0, 0, 0);
+                DrillCommon.writeHistory(content, stepNumber, dayNumber, m.get("staffName"),
+                        m.get("staffExp"), qdataAction, emoExp,
+                        m.get("skillsAdded"), m.get("moraleAdded"), m.get("efficiencyAdded"),
+                        mutableChild(m, "message").get(PhpArray.key(m.get("msgCount"))));
+                appendActionExp(m, emoExp);
+                m.put("attenWarning", params.get("dejected_warning_days"));
+                dejectedCount++;
+                m.put("emotion", 1L);
+            }
+
+            if (num(m.get("attention")) < 0) {
+                DrillCommon.setEnvironment(jdbc, content, "sick-leave", (int) c, dayNumber);
+                m.put("attention", params.get("dejected_tolerance_days"));
+                m.put("attenWarning", params.get("dejected_warning_days"));
+            }
+        }
+        if (ignoredCount > 0) {
+            PhpArray bossMsg = content.child("bossMsg");
+            mutableChild(bossMsg, "description").put(PhpArray.key(bossMsg.get("count")), "mustReadMsg");
+            bossMsg.put("count", num(bossMsg.get("count")) + 1);
+        }
+        if (dejectedCount > 0) {
+            PhpArray bossMsg = content.child("bossMsg");
+            mutableChild(bossMsg, "description").put(PhpArray.key(bossMsg.get("count")), "mustAttend");
+            bossMsg.put("count", num(bossMsg.get("count")) + 1);
+        }
+
+        // ---- the embargo ticks down for everybody
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m != null && num(m.get("away")) > 0) m.put("away", num(m.get("away")) - 1);
+        }
+
+        // ---- available work, and progress on whatever each member already holds
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m == null || !hasName(m.get("staffName"))) continue;
+
+            if (num(m.get("away")) < 1) {
+                m.put("workAvailable", round2(num(m.get("efficiencyValue")) / 100));
+            } else {
+                m.put("workAvailable", 0L);
+            }
+            if (truthy(m.get("workingOn"))) {
+                Object d = m.get("workingOn");
+                Object state = PhpJson.path(content, "orders", d, "state");
+                DrillCommon.calWorks(content, (int) c, d, dayNumber, (long) num(state), params);
+            }
+        }
+
+        // ---- hand out the order list, stage by stage
+        long totalOrders = (long) num(PhpJson.path(content, "control", "totalOrders"));
+        for (long t = 1; t < 6; t++) {
+            for (long c = 1; c <= maxMembers; c++) {
+                PhpArray m = member(content, c);
+                if (m == null) continue;
+                if (!taskStageMatches(m.get("task"), t) || num(m.get("away")) >= 1) continue;
+
+                PhpArray orders = content.child("orders");
+                for (long d = 1; d < totalOrders
+                        && num(PhpJson.path(orders, d, "day")) <= dayNumber; d++) {
+                    PhpArray order = (PhpArray) PhpJson.path(orders, d);
+                    if (order == null) continue;
+                    if (!order.containsKey(PhpArray.key("state"))) {
+                        // PHP also writes state into a NEW variable here ($contentr), so only
+                        // state is initialised on the real order.
+                        order.put("state", 0L);
+                    }
+                    if (num(order.get("state")) == (t - 1)
+                            && eq(order.get("assignedTo"), "")
+                            && num(m.get("workAvailable")) > 0
+                            && num(m.get("workingOn")) == 0) {
+                        Object taskName = m.get("task");
+                        double taskDuration = num(rowGet(eff.get(str(taskName)), "duration"));
+                        order.put("state", t);
+                        order.put("workNeeded", PhpJson.jsonNumber(taskDuration));
+                        order.put("assignedTo", m.get("staffName"));
+                        PhpArray log = mutableChild(order, "log").child(PhpArray.key(t));
+                        log.put("assignedTo", m.get("staffName"));
+                        log.put("assignedDay", dayNumber);
+                        log.put("workDuration", PhpJson.jsonNumber(taskDuration));
+                        m.put("workingOn", d);
+                        DrillCommon.calWorks(content, (int) c, d, dayNumber, t, params);
+                    }
+                }
+            }
+        }
+
+        // ---- order status overview
+        PhpArray orderStatus = content.child("orderStatus");
+        for (long t = 1; t < 6; t++) {
+            PhpArray cell = mutableChild(orderStatus, String.valueOf(t));
+            cell.put("state", t);
+            cell.put("waitAssignment", 0L);
+            cell.put("inProgress", 0L);
+            cell.put("done", 0L);
+        }
+        orderStatus.put("ordersCompleted", 0L);
+        PhpArray orders = content.child("orders");
+        for (long d = 1; d < totalOrders && num(PhpJson.path(orders, d, "day")) <= dayNumber; d++) {
+            PhpArray order = (PhpArray) PhpJson.path(orders, d);
+            if (order == null) continue;
+            double state = num(order.get("state"));
+            double workNeeded = num(order.get("workNeeded"));
+            Object assignedTo = order.get("assignedTo");
+            Object log = order.get("log");
+
+            if (state == 5 && workNeeded == 0) {
+                orderStatus.put("ordersCompleted", num(orderStatus.get("ordersCompleted")) + 1);
+                for (long t = 1; t < 6; t++) {
+                    PhpArray cell = mutableChild(orderStatus, String.valueOf(t));
+                    cell.put("done", num(cell.get("done")) + 1);
+                }
+            } else {
+                if (state >= 0) {
+                    if (eq(assignedTo, "") && workNeeded == 0) {
+                        PhpArray cell = mutableChild(orderStatus, String.valueOf((long) state + 1));
+                        cell.put("state", (long) state + 1);
+                        cell.put("waitAssignment", num(cell.get("waitAssignment")) + 1);
+                    } else if (!eq(assignedTo, "") && workNeeded > 0) {
+                        PhpArray cell = mutableChild(orderStatus, String.valueOf((long) state));
+                        cell.put("state", state);
+                        cell.put("inProgress", num(cell.get("inProgress")) + 1);
+                    }
+                    for (long t = 1; t < 6; t++) {
+                        if ((state > t) || (state == t && eq(assignedTo, "") && workNeeded == 0)) {
+                            PhpArray cell = mutableChild(orderStatus, String.valueOf(t));
+                            cell.put("done", num(cell.get("done")) + 1);
+                        }
+                    }
+                }
+                if (state == -1) {
+                    long logSize = seqSize(log);
+                    for (long t = 1; t < logSize; t++) {
+                        PhpArray cell = mutableChild(orderStatus, String.valueOf(t));
+                        cell.put("done", num(cell.get("done")) + 1);
+                    }
+                }
+            }
+        }
+
+        // ---- shorthanded detection
+        List<String> taskNames = new java.util.ArrayList<>();
+        Map<String, Object> taskStage = new LinkedHashMap<>();
+        PhpArray manpower = content.child("manpower");
+        long shortTasks = 0;                                   // $short, reset per task row
+        for (Map<String, Object> tt : PhpRows.query(jdbc, "select * from task")) {
+            Object taskName = PhpRows.get(tt, "taskName");
+            taskNames.add(str(taskName));
+            taskStage.put(str(taskName), PhpRows.get(tt, "stage"));
+            mutableChild(manpower, str(taskName)).put("mbr", 0L);
+            shortTasks = 0;                                    // yes, inside the loop
+        }
+        PhpArray manpowerTeam = content.child("manpowerTeam");
+        manpowerTeam.put("mbr", 0L);
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m == null || !hasName(m.get("staffName")) || num(m.get("away")) >= 1) continue;
+            PhpArray taskCell = mutableChild(manpower, str(m.get("task")));
+            taskCell.put("mbr", num(taskCell.get("mbr")) + 1);
+            manpowerTeam.put("mbr", num(manpowerTeam.get("mbr")) + 1);
+        }
+        for (String t : taskNames) {
+            PhpArray cell = mutableChild(manpower, t);
+            Object stage = taskStage.get(t);
+            double waitAssignment = num(PhpJson.path(orderStatus, stage, "waitAssignment"));
+            if (num(cell.get("mbr")) < num(cell.get("pos")) && waitAssignment > 0) {
+                cell.put("short", num(cell.get("short")) + 1);
+                shortTasks++;
+                if (num(cell.get("short")) > num(params.get("staff_shorthanded_tolerance_days"))) {
+                    for (long c = 1; c <= maxMembers; c++) {
+                        PhpArray m = member(content, c);
+                        if (m == null || !hasName(m.get("staffName"))) continue;
+                        if (eq(m.get("task"), t) && num(m.get("away")) < 1) {
+                            DrillCommon.setEnvironment(jdbc, content, "shorthanded-task",
+                                    (int) c, dayNumber);
+                        }
+                    }
+                    cell.put("short", params.get("staff_shorthanded_reset_days"));
+                }
+            } else {
+                cell.put("short", 0L);
+            }
+        }
+        if (num(manpowerTeam.get("mbr")) < num(manpowerTeam.get("pos")) && shortTasks != 0) {
+            manpowerTeam.put("short", num(manpowerTeam.get("short")) + 1);
+            if (num(manpowerTeam.get("short")) > num(params.get("team_shorthanded_tolerance_days"))) {
+                DrillCommon.setEnvironment(jdbc, content, "shorthanded-team", 0, dayNumber);
+                manpowerTeam.put("short", params.get("team_shorthanded_reset_days"));
+            }
+        } else {
+            manpowerTeam.put("short", 0L);
+        }
+    }
+
+    /** baseinfo.displayKey for an environment/emotion name, as the PHP reads it. */
+    private static String displayKey(JdbcTemplate jdbc, String name) {
+        Map<String, Object> row = firstRow(jdbc,
+                "select * from baseinfo where name = ?", name);
+        return str(rowGet(row, "displayKey"));
+    }
+
+    /** {@code actionExp} accumulates as "A/B"; an empty value does not get a leading slash. */
+    private static void appendActionExp(PhpArray m, String emoExp) {
+        String current = str(m.get("actionExp"));
+        m.put("actionExp", current.isEmpty() ? emoExp : current + "/" + emoExp);
+    }
+
+    /** {@code substr($task, 0, 1) == $t} — only a numeric first character can match. */
+    private static boolean taskStageMatches(Object task, long t) {
+        String s = str(task);
+        return !s.isEmpty() && s.charAt(0) == (char) ('0' + t) && t >= 0 && t <= 9;
+    }
+
+    /** PHP {@code round($v, 2)}. */
+    private static double round2(double v) {
+        return Math.round(v * 100.0) / 100.0;
+    }
+
+    /**
+     * PHP's {@code $action}: one variable reused for the leader's action row and then for
+     * every member's action row inside the MORE_ACTIONS loop.
+     *
+     * <p>The reuse is not cosmetic. Everything after the loop reads {@code $action} — the
+     * boss-review guard {@code if (!$action['noImpact'])}, and the sack/emotion/order
+     * passes — so they see the LAST ACTED MEMBER's action, not the leader's. Passes 4-5
+     * must read {@link #row}, never the row that was loaded before the loop.
+     */
+    static final class ActionSlot {
+        Map<String, Object> row;
+
+        ActionSlot(Map<String, Object> row) {
+            this.row = row;
+        }
+    }
+
+    /**
+     * case "MORE_ACTIONS", pass 3 (§29): "work on the impact of leader action for each
+     * member acted upon".
+     *
+     * <p>Five traps live in these 250 PHP lines, all reproduced:
+     *
+     * <ol>
+     *   <li><b>{@code $action} is shadowed</b> per member (see {@link ActionSlot}).</li>
+     *   <li><b>The guard is misspelled</b>: {@code if (!$action['noInmpact'])} (note the
+     *       "m"), so the array key never exists, {@code !null} is true, and cal_impacts
+     *       ALWAYS runs. The correctly-spelled {@code noImpact} is checked only after the
+     *       loop. Reproducing the typo is what keeps this branch reachable.</li>
+     *   <li><b>{@code $cont = $content} is a COPY.</b> cal_impacts runs on the copy, and
+     *       if the forced amounts apply it is re-run on the ORIGINAL content from its
+     *       pre-action state; otherwise the copy simply replaces the original. Java needed
+     *       {@link PhpArray#copy()} for this.</li>
+     *   <li><b>{@code $efficiencyFRorced}</b> (capital R) is a different, undefined
+     *       variable than {@code $efficiencyForced}: PHP reads null, so the knock-on
+     *       cal_affect always gets 0.</li>
+     *   <li><b>teamLunch shares teamBuild's enhance branch.</b> The teamLunch-specific
+     *       code is commented out, so a teamLunch action is scaled by
+     *       {@code teamBuild_low_impact}, not by any teamLunch parameter.</li>
+     * </ol>
+     *
+     * @return the branch's {@code $daysNeeded} (max of the acted actions' durations)
+     */
+    private static long applyMemberImpacts(JdbcTemplate jdbc, PhpArray content,
+                                           Map<String, Object> params,
+                                           Map<String, Map<String, Object>> eff,
+                                           ActionSlot slot, long maxMembers, long dayNumber,
+                                           Object stepNumber, String qdataAction,
+                                           Map<String, Object> prf) {
+        long daysNeeded = 0;
+        // $enhance is declared once before the loop and only reassigned by teamBuild /
+        // teamLunch; it is NOT reset per member.
+        double enhance = 1;
+
+        PhpArray usedActions = mutableChild(content.child("used"), "actions");
+        Object leaderParent = rowGet(slot.row, "parentAction");
+        Object ledgerKey = PhpArray.key(leaderParent);
+        usedActions.put(ledgerKey, num(usedActions.get(ledgerKey)) + 1);   // PHP: ++ on null = 1
+
+        for (long c = 1; c <= maxMembers; c++) {
+            PhpArray m = member(content, c);
+            if (m == null || !hasName(m.get("staffName"))) continue;
+
+            if (!truthy(m.get("actioned"))) {
+                // PHP: attention/attenWarning decrement for members who did NOT act
+                m.put("attention", num(m.get("attention")) - 1);
+                m.put("attenWarning", num(m.get("attenWarning")) - 1);
+                m.put("offdays", 0L);
+                continue;
+            }
+
+            double skillsForced = 0;
+            double moraleForced = 0;
+            double efficiencyForced = 0;
+
+            String memberAction = str(m.get("action"));
+            Map<String, Object> act = firstRow(jdbc,
+                    "select * from action where actionName = ?", memberAction);
+            slot.row = act;                                   // PHP: $action = fetch_assoc()
+            Object parentAction = rowGet(act, "parentAction");
+            Object comboObj = rowGet(act, "combo");
+            String combo = str(comboObj);
+
+            String nve = "";
+            boolean teamOverUsed = false;
+            if (num(rowGet(act, "checkTrend")) > 0 && num(m.get("trendLast")) > num(m.get("trend"))) {
+                nve = "-ve";
+            }
+            if (num(usedActions.get(PhpArray.key(parentAction))) > num(rowGet(act, "maximumUse"))) {
+                if (!"teamBuild".equals(combo) && !"teamLunch".equals(combo)) {
+                    nve = "-ve";
+                } else {
+                    teamOverUsed = true;
+                }
+            }
+
+            // ---- combo charges, gated on a previous action still being in effect
+            PhpArray effect = mutableChild(m, "effect");
+            if (num(effect.get(PhpArray.key(comboObj))) >= dayNumber) {
+                switch (combo) {
+                    case "training" -> {
+                        if (num(effect.get(PhpArray.key("set-goal"))) < dayNumber) {
+                            skillsForced = num(params.get("combo_training_skillsforced"));
+                        }
+                        moraleForced = num(params.get("combo_training_moraleforced"));
+                    }
+                    case "set-goal" -> {
+                        // note the asymmetry: `training` must still be ACTIVE (>=) while
+                        // `send-email-praise` must have EXPIRED (<)
+                        if (num(effect.get(PhpArray.key("training"))) >= dayNumber
+                                && num(effect.get(PhpArray.key("send-email-praise"))) < dayNumber) {
+                            skillsForced = num(params.get("combo_set-goal_skillsforced"));
+                            moraleForced = num(params.get("combo_set-goal_moraleforced"));
+                        }
+                    }
+                    default -> { }
+                }
+            }
+
+            // ---- event combos dampen the effect
+            if ("teamBuild".equals(combo) || "teamLunch".equals(combo)) {
+                if (num(m.get("styleMatch")) < 0) {
+                    nve = "-ve";
+                }
+                PhpArray envEffect = mutableChild(m, "envEffect");
+                PhpArray actEffect = mutableChild(m, "actEffect");
+                boolean dampened = !(num(envEffect.get(PhpArray.key("360-feedback"))) >= dayNumber
+                        || num(envEffect.get(PhpArray.key("Financial-Crisis"))) >= dayNumber
+                        || num(envEffect.get(PhpArray.key("take-over"))) >= dayNumber
+                        || num(actEffect.get(PhpArray.key("sack"))) >= dayNumber
+                        || num(actEffect.get(PhpArray.key("resigned"))) >= dayNumber
+                        || num(PhpJson.path(content, "control", "metTarget")) >= dayNumber
+                        || dayNumber <= 10);
+                if (!dampened) {
+                    enhance = 1;
+                } else {
+                    // teamLunch lands here too: its own parameter is not used
+                    enhance = num(params.get("teamBuild_low_impact"));
+                    if ("-ve".equals(nve)) enhance = 1;
+                }
+                DrillCommon.dbg(content, "teamBuild Enhance", enhance);
+            }
+
+            long duration = (long) num(rowGet(act, "duration"));
+            daysNeeded = Math.max(daysNeeded, duration);
+
+            double oldSkills = num(m.get("skillsValue"));
+            double oldMorale = num(m.get("moraleValue"));
+            double oldEfficiency = num(m.get("efficiencyValue"));
+
+            // ---- the action also moves the member onto the leader's task
+            if (truthy(rowGet(act, "withTask"))) {
+                m.put("task", PhpJson.path(content, "control", "task"));
+                m.put("taskExp", PhpJson.path(content, "control", "taskExp"));
+                // no guard in the PHP: with workingOn == 0 this writes orders[0].state
+                Object workingOn = m.get("workingOn");
+                content.child("orders").child(PhpArray.key(workingOn)).put("state", -1L);
+                m.put("workingOn", 0L);
+
+                // $sw/$mw are read then never used (the weighted formula is commented out),
+                // so only the skillseffect lookup matters:
+                //   efficiencyValue = min(round(skillsValue * skillsEffect), 100)
+                Map<String, Object> seff = firstRow(jdbc,
+                        "select * from skillseffect where minMorale <= ? and maxMorale >= ?",
+                        num(m.get("moraleValue")), num(m.get("moraleValue")));
+                double eo = num(m.get("efficiencyValue"));
+                double efficiencyValue = Math.min(
+                        PhpJson.round(num(m.get("skillsValue")) * num(rowGet(seff, "skillsEffect"))), 100);
+                m.put("efficiencyValue", PhpJson.jsonNumber(efficiencyValue));
+                double efficiencyAdded = efficiencyValue - eo;
+                m.put("efficiencyAdded", PhpJson.jsonNumber(efficiencyAdded));
+                // note: `=` here, not `+=` — the accumulators are rebuilt from scratch
+                m.put("added", PhpJson.jsonNumber(num(m.get("skillsAdded")) + num(m.get("moraleAdded"))
+                        + efficiencyAdded));
+
+                DrillCommon.writeHistory(content, stepNumber, dayNumber, m.get("staffName"),
+                        m.get("staffExp"), qdataAction, m.get("actionExp"),
+                        m.get("skillsAdded"), m.get("moraleAdded"),
+                        PhpJson.jsonNumber(efficiencyAdded), "");
+            }
+
+            if ("swap-task".equals(memberAction)) {
+                DrillCommon.dbg(content, "swap+-", nve + ", " + moraleForced);
+            }
+
+            // ---- the impact itself, on a COPY first
+            String intent = memberAction + nve;
+            PhpArray cont = content.copy();
+            // PHP: if (!$action['noInmpact']) -- misspelled, so this is ALWAYS true.
+            // $prf is cal_impacts' &$res out-parameter: whatever the LAST call resolved.
+            Map<String, Object> res = DrillCommon.calImpacts(jdbc, cont, (int) c, intent,
+                    enhance, 0, 0, 0);
+            PhpArray contMember = member(cont, c);
+            boolean forced = (skillsForced + moraleForced + efficiencyForced) != 0;
+            if (forced && contMember != null && num(contMember.get("added")) > 0) {
+                // re-run from the ORIGINAL content, so the action is not applied twice
+                res = DrillCommon.calImpacts(jdbc, content, (int) c, intent, enhance,
+                        skillsForced, moraleForced, efficiencyForced);
+            } else {
+                // PHP: $content = $cont. In place, because callers hold this reference.
+                content.clear();
+                content.putAll(cont);
+            }
+            // the copy REPLACED every nested array, so the cached member is stale
+            m = member(content, c);
+            effect = mutableChild(m, "effect");
+            if (res != null) prf.putAll(res);
+
+            DrillCommon.anaAction(jdbc, content, (int) c, intent, rowGet(prf, "desiredStyle"));
+
+            DrillCommon.writeHistory(content, stepNumber, dayNumber, m.get("staffName"),
+                    m.get("staffExp"), qdataAction, m.get("actionExp"),
+                    m.get("skillsAdded"), m.get("moraleAdded"), m.get("efficiencyAdded"),
+                    mutableChild(m, "message").get(PhpArray.key(m.get("msgCount"))));
+
+            // ---- weekly tally of the action group
+            long perWeek = (long) num(rowGet(act, "perWeek"));
+            Object weekKey = PhpArray.key(PhpJson.path(content, "day", dayNumber, "week"));
+            for (long w = 0; w < perWeek; w++) {
+                PhpArray cell = content.child("week")
+                        .child(PhpArray.key(num(weekKey) + w))
+                        .child(PhpArray.key(str(PhpJson.path(content, "control", "action"))));
+                cell.put("count", num(cell.get("count")) + 1);
+            }
+
+            // ---- days away
+            if (num(m.get("away")) > 0) m.put("away", num(m.get("away")) - 1);
+            if (num(m.get("away")) < 1) m.put("awayFor", "");
+            m.put("away", num(m.get("away")) + num(rowGet(act, "away")) + 1);
+            m.put("awayFor", m.get("action"));
+
+            // ---- how long the action stays effective (with the Monday fudge)
+            if (num(m.get("added")) > 0) {
+                long away = (long) num(rowGet(act, "away"));
+                long effectiveDays = (long) num(rowGet(act, "effectiveDays"));
+                long effectiveUntil = dayNumber + away + effectiveDays + 1;
+                PhpArray effArr = mutableChild(m, "effect");
+                Object parentKey = PhpArray.key(parentAction);
+                effArr.put(parentKey, effectiveUntil);
+                long wd = dayNumber % 5;
+                wd = (wd != 0) ? wd : 5;
+                if ((away + effectiveDays + 1 + wd) > 5) {
+                    effArr.put(parentKey, num(effArr.get(parentKey)) + 1);
+                }
+                if ((away + effectiveDays + 1 + wd) > 10) {
+                    effArr.put(parentKey, num(effArr.get(parentKey)) + 1);
+                }
+            }
+
+            // ---- bystanders
+            if (!"X".equals(str(rowGet(act, "affectedIf")))) {
+                for (long cx = 1; cx <= maxMembers; cx++) {
+                    PhpArray other = member(content, cx);
+                    if (other == null || !hasName(other.get("staffName")) || truthy(other.get("actioned"))) {
+                        continue;
+                    }
+                    double diff = switch (str(rowGet(act, "affectedWhen")).isEmpty() ? ""
+                            : str(rowGet(act, "affectedWhen")).substring(0, 1)) {
+                        case "1" -> num(other.get("skillsValue")) - oldSkills;
+                        case "2" -> num(other.get("moraleValue")) - oldMorale;
+                        case "3" -> num(other.get("efficiencyValue")) - oldEfficiency;
+                        default -> 0;
+                    };
+                    if ("absentNoAffect".equals(combo) && num(other.get("away")) > 0) {
+                        diff = 0;
+                    }
+                    String affectedIf = str(rowGet(act, "affectedIf"));
+                    if ("><".equals(affectedIf)
+                            || ("<".equals(affectedIf) && diff < 0)
+                            || (">".equals(affectedIf) && diff > 0)
+                            || (">=".equals(affectedIf) && diff >= 0)) {
+                        double afSkills = 0;
+                        double afMorale = 0;
+                        // sack inside the familialisation window, against a member with no
+                        // recorded effect, costs 10 morale
+                        if ("sack".equals(str(PhpJson.path(content, "control", "action")))
+                                && dayNumber <= num(params.get("team_familialisation_days"))) {
+                            if (seqSize(effect) == 0) afMorale = -10;
+                        }
+                        if ("recruit".equals(str(PhpJson.path(content, "control", "action")))
+                                && eq(other.get("task"), m.get("task"))) {
+                            afMorale = 5;
+                        }
+                        // $efficiencyFRorced (sic) is undefined in the PHP -> null -> 0
+                        DrillCommon.calAffect(jdbc, content, (int) cx,
+                                str(rowGet(act, "actionName")), afSkills, afMorale, 0);
+                        DrillCommon.writeHistory(content, stepNumber, dayNumber,
+                                other.get("staffName"), other.get("staffExp"), qdataAction,
+                                other.get("actionExp"), other.get("skillsAdded"),
+                                other.get("moraleAdded"), other.get("efficiencyAdded"),
+                                mutableChild(other, "message").get(PhpArray.key(other.get("msgCount"))));
+                    }
+                }
+            }
+
+            m.put("attention", params.get("dejected_tolerance_days"));
+            m.put("attenWarning", params.get("dejected_warning_days"));
+            m.put("offdays", 0L);
+        }
+
+        return daysNeeded;
     }
 
     private static long seqSize(Object v) {

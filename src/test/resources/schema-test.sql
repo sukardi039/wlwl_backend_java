@@ -246,7 +246,23 @@ create table action (
   affectedWhen      varchar(100) default null,
   affectedIf        varchar(100) default null,
   away              int default 0,
-  "1In4"            int default 0
+  "1In4"            int default 0,
+  -- the rest of production's columns, needed by drill/action.php MORE_ACTIONS.
+  -- (Production order is duration..vacancyOK; these are appended instead of being
+  -- reordered so existing fixture rows and assertions keep their columns.)
+  evaluation        int default 0,
+  evaluated         int default 0,
+  perWeek           int default 0,
+  checkTrend        int default 0,
+  noImpact          int default 0,
+  anyTime           int default 0,
+  maximumUse        int default 9999,
+  managementAction  int default 0,
+  combo             varchar(45) default null,
+  effectiveDays     int default 0,
+  useLimit          int default 9999,
+  focusedStaff      int default 0,
+  vacancyOK         int default 0
 );
 insert into action (actionName, actionType, parentAction, seq, show, "1In4") values
   ('Plan',   1, 'Plan',    1, 1, 1),

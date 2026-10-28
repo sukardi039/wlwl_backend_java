@@ -672,8 +672,42 @@ public final class DrillCommon {
         String parentAction = act == null ? null : str(rowGet(act, "parentAction"));
 
         if ("evaluate".equals(parentAction)) {
-            throw new IllegalStateException("cal_impacts(): the evaluate branch needs "
-                    + "cal_swap(), which is not ported yet (action.php slice)");
+            // ---- evaluation action: score the swap on a COPY, then record the verdict
+            //
+            // Two things to preserve: cal_swap runs against $cont (a copy) so the member's
+            // real stats are NOT changed by the evaluation itself, and only the message /
+            // evaluated / evaluatedFor fields land on $content. The task name and code come
+            // out of cal_swap's by-reference parameters, which are null when the member's
+            // task_eff has no matching row.
+            PhpArray cont = content.copy();
+            Swap swap = calSwap(cont, c, "evaluate");
+            Object swappedTaskName = swap.taskName();     // $ttsk
+            Object swappedTaskCode = swap.taskCode();     // $ctsk
+            PhpArray evaluated = memberAt(cont, c);
+
+            String tm = str(swappedTaskName) + ": "
+                    + "&#_u.r_skill#&: " + (num(evaluated.get("skillsAdded")) > 0 ? "+" : "")
+                    + numStr(num(evaluated.get("skillsAdded")))
+                    + " &#_u.r_morale#&: " + (num(evaluated.get("moraleAdded")) > 0 ? "+" : "")
+                    + numStr(num(evaluated.get("moraleAdded")))
+                    + " &#_u.r_efficiency#&: " + (num(evaluated.get("efficiencyAdded")) > 0 ? "+" : "")
+                    + numStr(num(evaluated.get("efficiencyAdded")));
+
+            m.put("action", "");
+            m.put("evalResult", tm);
+            m.put("evaluatedFor", swappedTaskCode);
+            long msgCount = (long) num(m.get("msgCount")) + 1;
+            m.put("msgCount", msgCount);
+            m.child("message").put(msgCount, tm);
+            m.put("evaluated", 1L);
+            m.put("action", "");
+
+            PhpArray staffMsg = content.child("staffMsg");
+            Object slot = staffMsg.get("count");
+            staffMsg.child("staffExp").put(PhpArray.key(slot), m.get("staffExp"));
+            staffMsg.child("description").put(PhpArray.key(slot), tm);
+            staffMsg.put("count", num(slot) + 1);
+            return res;
         }
 
         // PHP: else if ($act['evaluated'] != 1 || member.evaluated != 1 || (evaluated == 1 && evaluatedFor != task))

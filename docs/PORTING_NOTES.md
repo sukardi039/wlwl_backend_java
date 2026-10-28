@@ -893,7 +893,7 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 | `drill/commonLib.php` | 775 | **complete — 22 of 22 functions** in `DrillCommon.java` |
 | `drill/init.php` | 350 | **ported + tested** (`DrillInitParityTest`, 8 cases) |
 | `drill/environment.php` | 232 | **ported + tested** (`DrillEnvironmentParityTest`, 5 cases) |
-| `drill/action.php` | 891 | **PARTIAL** — `SELECT_STYLE` ported + tested; `MORE_ACTIONS` passes 1–2 (`applyRecruits`, `applySwapTask`) written + unit-tested but **not wired into the dispatch**; passes 3–5 unported, so every non-`SELECT_STYLE` action answers 501 |
+| `drill/action.php` | 891 | **COMPLETE + tested** — `SELECT_STYLE` (`DrillActionSelectStyleTest`) and `MORE_ACTIONS` (`DrillMoreActionsTest`, 4 cases), plus `cal_impacts`' evaluate branch (`DrillImpactMathTest`). 891 lines in one file, so it lives in several methods: `selectStyle`, `applyRecruits`, `applySwapTask`, `applyMemberImpacts` (pass 3), `afterMemberImpacts` (pass 4). Pass 5 was all commented-out code |
 | `drill/bossreview.php` | 108 | **ported + tested** (`BossReviewTest`, 4 cases) |
 | `drill/post.php` | 60 | **ported + tested** (`DrillPostParityTest`, 6 cases) — POST verb, query string = userId |
 
@@ -902,15 +902,13 @@ Both drills also ended the same way — terminal row sharing its predecessor's `
 `highMorale`, `lowMorale`, `cal_impacts`, `cal_affect`, `writeSummary` (plus helpers
 `truthy`, `named`, `hasName`, `isStrictlyZero`, `extreme`, `Pick`).
 
-`DrillCommon` is COMPLETE: all 22 commonLib functions are ported, and `bossreview.php` is
-ported too, so the only thing left in `drill/` is `action.php`'s `MORE_ACTIONS` branch —
-see §29 for its five-pass decomposition and current state.
+`DrillCommon` is COMPLETE: all 22 commonLib functions are ported, `bossreview.php` is ported,
+and `action.php`'s `MORE_ACTIONS` branch is ported too (§32). **`drill/` is done.**
 
 Notable gap inside a ported function:
 
-- `cal_impacts()`'s `evaluate` branch calls `cal_swap()` (ported) but the `$tm` message
-  assembly belongs to action.php's evaluate flow, so it still throws
-  `IllegalStateException`. That is the first item of the ACTION slice.
+- ~~`cal_impacts()`'s `evaluate` branch still throws~~ — CLOSED. The branch is ported: it
+  runs `cal_swap` on a COPY of the content and records only the verdict (see §32.4).
 - `cal_impacts()`'s `$eff` parameter (task skill/morale weights) is only read inside the
   PHP's `if (false) { ... }` dead block, so the port omits it.
 - `cal_affect()` is called by `environment.php` with 8 arguments against a 9-parameter
@@ -924,8 +922,9 @@ Notable gap inside a ported function:
   headcount (the PHP's `currentMembers()` result is overwritten on the next line), and its
   trend block runs for empty slots, auto-vivifying `members[$c]` on write.
 
-Unported branches answer **501 with the mod name in the body**, deliberately: a silent
-`No Mod` or an empty 200 would let an unported branch look like a working one.
+`qdata.action` has exactly two values the client sends — `SELECT_STYLE` and `MORE_ACTIONS` —
+and both are ported. Any other value is a client bug and answers **501 with the name in the
+body**: a silent `No Mod` or an empty 200 would hide it.
 
 Sample data: the two real dumps in `/opt/data/pastes/paste_3_033955.txt` and
 `paste_4_051615.txt` (drillDetailId, drillId, stepNumber, dayNumber, action, content …)
@@ -1225,7 +1224,7 @@ are INT columns and the PHP splices them as quoted strings, so MySQL casts `''` 
 **28.6 Same gzip divergence as environment.php:** the PHP answers `text/javascript` +
 `Content-Encoding: gzip`; the port answers plain JSON.
 
-## 29. MORE_ACTIONS — decomposition (recruit block ported)
+## 29. MORE_ACTIONS — decomposition (all five passes resolved)
 
 The branch runs from `case "MORE_ACTIONS":` to the shared tail, ~660 lines. It is laid out
 as a sequence of independent passes over the member list, so it ports in this order:
@@ -1234,9 +1233,9 @@ as a sequence of independent passes over the member list, so it ports in this or
 |---|---|---|---|
 | 1 | `actionType == 'recruits'` — move actioned recruits into free slots | 77–124 | **ported** (`DrillAction.applyRecruits` + `DrillRecruitMathTest`) |
 | 2 | `swapTask` — pairwise task swap between actioned members | 126–176 | **ported** (`DrillAction.applySwapTask` + `DrillSwapTaskTest`) |
-| 3 | `used.actions[parentAction]++`, then the per-member impact loop (`cal_impacts` / `cal_affect`, `recal_eff`, `cal_works`, history) | 179–~500 | not ported |
-| 4 | meet-the-boss / order-stage progression and `setEnvironment` triggers | ~500–700 | not ported |
-| 5 | `writeSummary` leftovers before the shared tail at 739 | ~700–738 | not ported |
+| 3 | `used.actions[parentAction]++`, then the per-member impact loop (`cal_impacts` / `cal_affect`, `recal_eff`, `cal_works`, history) | 179–~500 | **ported** (`DrillAction.applyMemberImpacts`) |
+| 4 | meet-the-boss / order-stage progression and `setEnvironment` triggers | ~500–700 | **ported** (`DrillAction.afterMemberImpacts`) |
+| 5 | `writeSummary` leftovers before the shared tail at 739 | ~700–738 | **nothing to port** — the block is entirely commented out |
 
 Notes for whoever picks this up:
 
@@ -1373,3 +1372,79 @@ the override gets a separator appended when missing, since it is a deployment se
 second-resolution quirk (it did: two tests failed with 200 instead of 204). Both classes
 therefore pin `usedOn` to an old value in `@BeforeEach`. Any new test that authenticates must
 do the same, or use a different `restkey`.
+
+## 32. drill/action.php MORE_ACTIONS — the quirks that make it "wrong but correct"
+
+The branch is ~660 PHP lines (`action.php:74-730`) executed as four ordered passes. Every
+entry below is a bug or oddity in the PHP that the port reproduces on purpose. Changing any
+of them changes the game.
+
+**32.1 `$action` is SHADOWED inside the member loop.** `$action` starts as the leader's
+action row (`content.control.action`), and then `$action = mysqli_fetch_assoc(...)` runs once
+per acting member. Everything AFTER the loop reads the LAST ACTED MEMBER's row. Two visible
+consequences: the boss-review guard tests `$action['noImpact']` of that member's action, not
+the leader's, and the sack/emotion passes see the same row. Modelled by
+`DrillAction.ActionSlot`; if you "clean this up" by reloading the leader's row, boss reviews
+change.
+
+**32.2 The guard is MISSPELLED: `if (!$action['noInmpact'])`.** Note the "m". The key never
+exists, `!null` is true, so **cal_impacts always runs** — the `noImpact` flag does not gate
+the member's own impact at all (it only gates the boss review after the loop, where it is
+spelled correctly). Reproducing the typo is what keeps this branch reachable;
+`DrillMoreActionsTest.noImpactTypoDoesNotBlockTheImpact` pins both halves: an action with
+`noImpact = 1` still changes the member's stats, yet the boss stays quiet.
+
+**32.3 `$cont = $content` is a COPY, and the forced re-run starts from the ORIGINAL.**
+cal_impacts is first applied to a copy. If the forced combo amounts are non-zero AND the copy
+gained value, the PHP throws the copy away and re-runs cal_impacts on the ORIGINAL `$content`
+with the forced amounts; otherwise the copy replaces the original. The point is that the
+action is never applied twice. Java needed `PhpArray.copy()` (deep) for this — and after
+replacing the content, any cached member reference is stale, which is why
+`applyMemberImpacts` re-reads `member(content, c)` before touching it again.
+
+**32.4 `cal_impacts`' evaluate branch changes NOTHING about the member.** When the action
+row's `parentAction` is `'evaluate'`, the PHP copies the content, runs `cal_swap` on the copy
+to compute the verdict, and writes only `evalResult`, `evaluatedFor`, `evaluated = 1`, a
+message and a `staffMsg` entry — the skills/morale/efficiency totals are untouched, and
+`action` is cleared. The message text is
+`<taskDisplayName>: &#_u.r_skill#&: <+/-n> &#_u.r_morale#&: <+/-n> &#_u.r_efficiency#&: <+/-n>`
+built from the COPY's deltas. If `cal_swap` finds no matching `task_eff` row, the task name
+is null and the message starts with `": "`.
+
+**32.5 `$efficiencyFRorced` (capital R) is undefined.** The knock-on `cal_affect` call passes
+that misspelled variable, which is a different variable from `$efficiencyForced`; PHP reads
+null. So the bystander's efficiency forcing is always 0. Ported as a literal 0 with a
+comment.
+
+**32.6 teamLunch shares teamBuild's enhance branch.** The `switch ($action['combo'])` for
+event combos has `case 'teamBuild': case 'teamLunch':` falling into ONE body, and the
+teamLunch-specific code is commented out. A teamLunch action is therefore scaled by
+`params.teamBuild_low_impact`, and there is no teamLunch parameter in play. `$enhance` is
+declared once before the loop (`$enhance = 1`) and only reassigned by this branch — it is NOT
+reset per member.
+
+**32.7 `$contentr` (sic) in the order loop.** The "initialise order state" line writes
+`assignedTo` into a NEW variable `$contentr` instead of `$content`, so a fresh order gets
+`state = 0` but never an empty `assignedTo`. It is discarded on the next iteration. The port
+does nothing for it and says so; adding the missing initialisation would change order
+assignment.
+
+**32.8 `$short` is one variable reused across tasks**, and it is reset INSIDE the `while` that
+loads the task list — so after that loop it holds 0, and the following `foreach` accumulates
+the count of short-handed tasks into it. That accumulated value is what the team-level check
+uses (`&& $short`).
+
+**32.9 The emotion checks are mostly NOT guarded by `staffName`.** Only "resigned" requires a
+named member; the `listen < 0` (ignored), `attenWarning < 0` (dejected) and `attention < 0`
+(sick leave) checks run for every slot, including empty ones. Preserved.
+
+**32.10 Column pairs that look interchangeable but are not.** `cal_impacts` reads
+`skillsImpact`/`moraleImpact`/`efficiencyImpact`; `cal_affect` reads
+`skillsAffect`/`moraleAffect`/`efficiencyAffect`. A `profileimpact` row that only sets the
+`*Impact` columns makes the bystander effect a silent zero. This cost a test round; the
+fixture now sets both sets.
+
+**32.11 `$daysNeeded` only shrinks the calendar.** `daysNeeded = max($daysNeeded,
+$action['duration'])` per acting member; the shared tail still advances the day by exactly
+one and then subtracts `(daysNeeded - 1)` from `control.numberOfDays`. A duration of 0 (the
+column default) is harmless because the max starts at 0.

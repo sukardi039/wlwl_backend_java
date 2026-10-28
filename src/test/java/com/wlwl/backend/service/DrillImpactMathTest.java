@@ -209,14 +209,39 @@ class DrillImpactMathTest {
     }
 
     @Test
-    @DisplayName("cal_impacts refuses the evaluate branch instead of silently skipping it")
-    void evaluateBranchIsLoud() {
+    @DisplayName("cal_impacts' evaluate branch records the verdict WITHOUT touching the stats")
+    void evaluateBranchRecordsVerdict() {
         jdbc.update("insert into action (actionName, actionType, parentAction, seq, show) "
-                + "values ('evaluate-1', 2, 'evaluate', 9, 1)");
+                + "values ('evaluate-Inspect', 2, 'evaluate', 9, 1)");
         PhpArray c = content();
+        // cal_swap resolves both the current and the target task through content.task_eff
+        PhpArray te = new PhpArray();
+        te.put("taskName", "Inspect");
+        te.put("taskDisplayName", "Inspect");
+        te.put("skillsWeight", 0.5);
+        te.put("moraleWeight", 0.5);
+        c.child("task_eff").append(te);
+        PhpArray m = (PhpArray) PhpJson.path(c, "members", 1L);
+        // the action string names the task being evaluated after the "evaluate-" prefix
+        m.put("action", "evaluate-Inspect");
+        double skillsBefore = PhpJson.num(m.get("skillsValue"));
+        double moraleBefore = PhpJson.num(m.get("moraleValue"));
+        double efficiencyBefore = PhpJson.num(m.get("efficiencyValue"));
 
-        assertThatThrownBy(() -> DrillCommon.calImpacts(jdbc, c, 1, "evaluate-1", 1.0, 0, 0, 0))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("cal_swap");
+        DrillCommon.calImpacts(jdbc, c, 1, "evaluate-Inspect", 1.0, 0, 0, 0);
+
+        // cal_swap ran on a COPY: the evaluation itself changes nothing about the member
+        assertThat(PhpJson.num(m.get("skillsValue"))).isEqualTo(skillsBefore);
+        assertThat(PhpJson.num(m.get("moraleValue"))).isEqualTo(moraleBefore);
+        assertThat(PhpJson.num(m.get("efficiencyValue"))).isEqualTo(efficiencyBefore);
+
+        // the verdict is recorded and the action is consumed
+        assertThat(PhpJson.num(m.get("evaluated"))).isEqualTo(1);
+        assertThat(m.get("action")).isEqualTo("");
+        assertThat((String) m.get("evalResult")).startsWith("Inspect: ");
+        assertThat(m.get("evaluatedFor")).isEqualTo("Inspect");
+        // staffMsg had no "count" key in this fixture, so PHP increments null -> 1 and
+        // writes the entry under the "" key (array[null] === array[""]). Faithful.
+        assertThat(PhpJson.num(PhpJson.path(c, "staffMsg", "count"))).isEqualTo(1);
     }
 }

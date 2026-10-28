@@ -147,10 +147,12 @@ class DrillActionSelectStyleTest {
     }
 
     @Test
-    @DisplayName("an unported action branch refuses loudly instead of pretending to work")
+    @DisplayName("an unknown action still refuses loudly instead of pretending to work")
     void unportedBranch() throws Exception {
-        MvcResult r = step("MORE_ACTIONS");
+        // SELECT_STYLE and MORE_ACTIONS are now both ported; anything else is a client
+        // bug, and the switch keeps answering 501 with the name rather than a silent 200.
+        MvcResult r = step("NOT_A_REAL_ACTION");
         assertThat(r.getResponse().getStatus()).isEqualTo(501);
-        assertThat(r.getResponse().getContentAsString()).contains("MORE_ACTIONS");
+        assertThat(r.getResponse().getContentAsString()).contains("NOT_A_REAL_ACTION");
     }
 }
