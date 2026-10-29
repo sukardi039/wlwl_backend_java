@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Port of drill/action.php — the player's move. PARTIAL: only SELECT_STYLE.
+ * Port of drill/action.php — the player's move.
  *
  * Structure of the PHP, which this mirrors:
  *   1. preamble — rewrite the client's row, load weights/params, decode content,
@@ -28,9 +28,11 @@ import java.util.Map;
  *      recompute the status ladder (including assigning staff to the new day's events),
  *      persist and answer.
  *
- * The switch has exactly the two branches the client ever sends — SELECT_STYLE and
- * MORE_ACTIONS — and both are ported. Anything else is a client bug and answers 501 with the
- * name in the body, loudly, because a silent "No Mod" or an empty 200 would hide it.
+ * The client sends three actions here: INTRODUCTION (step 0), SELECT_STYLE and MORE_ACTIONS.
+ * All three are handled, but only the last two have a branch in the PHP switch — INTRODUCTION
+ * deliberately does nothing and lets the shared tail run (see the case comment). Anything
+ * else is a client bug and answers 501 with the name in the body, loudly, because a silent
+ * "No Mod" or an empty 200 would hide it.
  */
 public final class DrillAction {
 
@@ -85,6 +87,16 @@ public final class DrillAction {
         Map<String, Object> prf = new LinkedHashMap<>();
 
         switch (action) {
+            case "INTRODUCTION" -> {
+                // action.php has NO case for this: the client sends it at step 0, the switch
+                // matches nothing, $daysNeeded stays 0 and only the shared tail runs. That
+                // tail is the whole point — writeSummary() records phase 'INTRODUCTION'
+                // (action.php:741) BEFORE $qdata->action is reassigned to
+                // SELECT_STYLE/MORE_ACTIONS (action.php:767), and that entry is what
+                // ReportResult.vue's findSummary("INTRODUCTION") charts. Doing per-action
+                // work here would be wrong: at step 0 no leader action has been chosen yet
+                // ($content['control']['action'] is ''), so there is nothing to apply.
+            }
             case "SELECT_STYLE" -> daysNeeded = selectStyle(jdbc, content, qdata, drillId, params,
                     maxMembers, dayNumber, stepNumber, action, prf);
             case "MORE_ACTIONS" -> {

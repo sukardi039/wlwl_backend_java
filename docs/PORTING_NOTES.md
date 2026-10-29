@@ -1523,3 +1523,41 @@ Two details worth keeping:
 
 Deployment: `-e WLWL_REGISTRATION_FILE=/data/registration.json -v ...:/data/registration.json:ro`.
 The bundled placeholder is `{"company":"wlwl", ...}` — it must be replaced in production.
+
+## 34. `action.php` — `INTRODUCTION` is a case that is deliberately NOT a case
+
+`drill/` mod=ACTION receives three actions from the client:
+`INTRODUCTION` (step 0, `Drill.vue:submitIntroduction()` — also the path used for
+`submitStyle`), `SELECT_STYLE` and `MORE_ACTIONS`.
+
+Only the last two have a `case` in `action.php`'s `switch ($qdata->action)`. There is no
+`case "INTRODUCTION"` and no `default` — the request matches nothing, falls out of the
+switch with `$daysNeeded = 0`, and runs the **shared tail**. That is the entire
+implementation, and it is load-bearing in a non-obvious way:
+
+| step | `action.php` | effect |
+|---|---|---|
+| 1 | `weekSummary($content)` | folds the finished week |
+| 2 | `writeSummary($content, $qdata)` — line **741** | stamps `summary[n].phase = $qdata->action`, i.e. **`INTRODUCTION`** |
+| 3 | `$qdata->dayNumber++`, then line **767** reassigns `$qdata->action` to `SELECT_STYLE`/`MORE_ACTIONS` | decides the NEXT action from `$content['day'][dayNumber]['evaluateStyle']` |
+| 4 | `insert into drilldetail ... action = $qdata->action` | the row is labelled with the **next** action, not INTRODUCTION |
+
+So one request produces two different action values: the summary is phased
+`INTRODUCTION`, the persisted row is phased `SELECT_STYLE`/`MORE_ACTIONS`. Both are
+required:
+
+* `ReportResult.vue` `findSummary(d, "INTRODUCTION")` is the report chart's first point
+  (and `findSummary(d*5, "MORE_ACTIONS")` the rest). Lose the phase and the chart
+  silently starts at the second week — no error, just a missing data point.
+* The client renders the *next* step from `data.action`, so the row must carry the
+  next action or the player re-runs the intro screen.
+
+The port therefore has `case "INTRODUCTION" -> { }` with an empty body and a comment
+saying why. **Do not "simplify" it away**, and do not move `writeSummary` after the
+reassignment in the tail: either change breaks the report while every request still
+returns 200.
+
+Verification: `DrillActionIntroductionTest` (5 tests) asserts the 200, the
+`INTRODUCTION` phase with its step/day, that no stats or history change, that the row
+stores the next action and the advanced day, and that unknown actions still answer 501.
+Against the pre-fix code those tests fail with `expected: 200 but was: 501`.

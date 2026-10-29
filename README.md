@@ -15,13 +15,13 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **260 passing** (`mvn verify`, 37 test classes, verified 2026-10-29) |
+| Tests | **265 passing** (`mvn verify`, 38 test classes, verified 2026-10-29) |
 
 The largest module, and the only one that needed a decomposition plan:
 
 | module | status |
 |---|---|
-| `drill` (5,617 LOC; 2,798 live) | **PORTED + tested** — all 18 files, `commonLib` 22/22, and both `mod=ACTION` branches (`SELECT_STYLE`, `MORE_ACTIONS` incl. the evaluate path). The quirks reproduced there are listed in `docs/PORTING_NOTES.md` §32; read it before touching that branch. |
+| `drill` (5,617 LOC; 2,798 live) | **PORTED + tested** — all 18 files, `commonLib` 22/22, and all three `mod=ACTION` actions the client sends: `INTRODUCTION` (the PHP has no case for it — it falls through to the shared tail, see `PORTING_NOTES` §34), `SELECT_STYLE`, and `MORE_ACTIONS` incl. the evaluate path. The quirks reproduced there are listed in `docs/PORTING_NOTES.md` §32; read it before touching that branch. |
 | `signin` (144) | **DROPPED by ruling** — dead: no `wxuser`/`studentlist`/`tasks`, and 0 client call sites |
 | `messages` (51) | **DROPPED by ruling** — dead; risk accepted and logged (see ledger risk register R1–R4) |
 
