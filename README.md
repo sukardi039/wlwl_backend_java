@@ -15,7 +15,7 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **254 passing** (`mvn verify`, 34 test classes, verified 2026-10-28) |
+| Tests | **260 passing** (`mvn verify`, 37 test classes, verified 2026-10-29) |
 
 The largest module, and the only one that needed a decomposition plan:
 
@@ -198,6 +198,54 @@ docker compose logs db | tail -5                  # is MySQL actually up?
 
 Timestamps in the log carrying `+08:00` are expected — that is `TZ=Asia/Shanghai`
 doing its job for date parity, not a symptom.
+
+## `registration.json` — the login screen's identity file
+
+The Vue client does `fetch("backend/registration.json")` in `Login.vue`'s `created()`,
+before authentication, and sets `document.title = data.company`. It is **not** an RPC
+module and **not** an endpoint the PHP had in source: `.gitignore` in `wlwl_backend`
+lists `registration.json` on line 2, so each IIS deployment supplied its own copy
+(company name, registration numbers, regulator links). That is why the port shipped
+without it — there was no file in the repo to copy.
+
+The Java app serves `GET /backend/registration.json` from, in order:
+
+| order | source |
+|---|---|
+| 1 | `WLWL_REGISTRATION_FILE` — the deployment's own file, the equivalent of the gitignored one |
+| 2 | bundled `src/main/resources/registration.json` — a **placeholder** (`{"company":"wlwl", ...}`) |
+
+```bash
+docker run ... -e WLWL_REGISTRATION_FILE=/data/registration.json \
+  -v /srv/wlwl/registration.json:/data/registration.json:ro wlwl-backend:0.1.0
+```
+
+The seven keys the client reads, all required:
+
+```json
+{
+  "company": "PT Example",
+  "reg":     "No. 12345/ABC",
+  "url":     "https://registrar.example/company",
+  "ida":     "IDA-12345",
+  "polreg":  "/images/polreg.png",
+  "polurl":  "https://example/privacy",
+  "pol":     "Privacy Policy"
+}
+```
+
+Rules, and why:
+
+- **A configured-but-missing file answers 404** — never the placeholder. A live system
+  advertising the wrong company name and registration numbers is worse than a blank
+  footer, and 404 is exactly what IIS did, so the client's `if (res.status === 200)`
+  guard behaves identically.
+- **Bytes are passed through unchanged**, so the deployed file's key order survives. The
+  file is not re-serialised and not validated at startup.
+- **It needs no `restkey`**, like the other pre-auth responses — the login page fetches it
+  before anyone signs in.
+- The bundled placeholder **must be replaced in production**; it exists so a fresh
+  checkout answers 200 with a well-formed body instead of 404.
 
 ## Database: schema and seed
 

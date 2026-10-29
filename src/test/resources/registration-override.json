@@ -1,0 +1,9 @@
+{
+  "company": "Override Company",
+  "reg": "REG-999",
+  "url": "https://example.test/company",
+  "ida": "IDA-123",
+  "polreg": "/images/polreg.png",
+  "polurl": "https://example.test/policy",
+  "pol": "Privacy Policy"
+}

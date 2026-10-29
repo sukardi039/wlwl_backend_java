@@ -44,6 +44,12 @@ spring:
 wlwl:
   upload:
     dir: ${WLWL_UPLOAD_DIR:}
+  # backend/registration.json — the login screen's deployment identity (company,
+  # registration numbers, regulator links). The PHP kept this file gitignored, in the
+  # webroot, so each deployment supplied its own. Empty = serve the bundled placeholder
+  # from src/main/resources; set WLWL_REGISTRATION_FILE to the real file in production.
+  registration:
+    file: ${WLWL_REGISTRATION_FILE:}
 
 logging:
   level:

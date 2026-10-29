@@ -1484,3 +1484,42 @@ It is a static check, not a substitute for a rehearsal against a real MySQL inst
 values, column types and MySQL-vs-H2 semantics are out of scope. Table names are all
 lowercase in the queries, which matters because the legacy server was Windows MySQL
 (case-insensitive) and a Linux MySQL is case-sensitive.
+
+## 33. `backend/registration.json` — the file that was never in git
+
+The Vue login screen fetches `backend/registration.json` in `created()`, before it
+authenticates anything (`src/views/Login.vue`, `getReg()`), and `displayAll(data)` does
+`document.title = data.company`. The footer renders seven keys unguarded:
+
+```html
+{{ida.company}} {{ida.reg}}<a :href="ida.url">{{ida.ida}}</a>
+<img :src="ida.polreg" width="10" /> <a :href="ida.polurl">{{ida.pol}}</a>
+```
+
+It is easy to conclude the port is missing a module here. It is not: **the PHP repo
+never contained this file.** `.gitignore` line 2 of `wlwl_backend` is literally
+`registration.json`, next to `etc/db.inc` — it is per-deployment data (a customer's
+company name, registration number, regulator links), dropped into the IIS webroot, and
+git deliberately kept it out. There is therefore no original file to port, and the
+values are not knowable from source.
+
+The Java side reproduces the *mechanism*, not a fabricated copy:
+
+| | PHP (IIS) | Java |
+|---|---|---|
+| source of truth | file in the webroot | `WLWL_REGISTRATION_FILE`, else bundled `src/main/resources/registration.json` |
+| when absent | IIS 404, client skips `displayAll()`, page still works | configure-but-missing → 404 (same outcome); nothing configured → bundled placeholder |
+| body | the bytes of the file | the bytes of the file — never re-serialised, key order preserved |
+
+Two details worth keeping:
+
+* **It is not an RPC module.** `BackendGateway` maps `/backend/{module}`, which also
+  matches `/backend/registration.json`; a literal pattern is more specific than the
+  template, so `RegistrationJsonController` wins. A test asserts the gateway still 404s
+  unknown modules, so this mapping did not open up `/backend/**`.
+* **Configured-but-unreadable is a 404, not a fallback.** Serving the placeholder would
+  mean a live system advertising the wrong company name and registration numbers.
+  Failing visibly is the safer default, and matches what IIS did.
+
+Deployment: `-e WLWL_REGISTRATION_FILE=/data/registration.json -v ...:/data/registration.json:ro`.
+The bundled placeholder is `{"company":"wlwl", ...}` — it must be replaced in production.
