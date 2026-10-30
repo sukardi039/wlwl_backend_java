@@ -57,6 +57,20 @@ public class RestSessionService {
         }
     }
 
+    /**
+     * New HTTP APIs validate the session separately from updating its timestamp.
+     * Unlike the legacy RPC gate, database errors propagate to the HTTP error handler.
+     */
+    public boolean authenticate(String restkey) {
+        if (restkey == null || restkey.isBlank()) return false;
+        Integer matches = jdbc.queryForObject(
+                "select count(*) from restsession where restkey = ? and deletedOn is null",
+                Integer.class, restkey);
+        if (matches == null || matches == 0) return false;
+        jdbc.update(TOUCH_SQL, usedOnNow(), restkey);
+        return true;
+    }
+
     /** e.g. 2026-10-26 15:47:01.4231 — the trailing microseconds are NOT zero-padded. */
     static String usedOnNow() {
         LocalDateTime now = LocalDateTime.now();

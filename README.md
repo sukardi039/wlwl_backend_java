@@ -93,6 +93,20 @@ The workflow needs no secrets: the parity suite runs entirely on in-memory H2, a
 database credentials are only ever supplied at runtime through the environment. The
 `contents: write` permission exists solely to create the Release on a tag.
 
+## Image upload and public retrieval
+
+New clients should use `POST /backend/media/images` with an existing session key in
+`Authorization: Bearer <restkey>` and a multipart `file` field. The response includes
+an image ID and a public URL at `GET /backend/media/images/{id}`. JPEG/PNG uploads are
+decoded, bounded by size/pixel limits and re-encoded before publication.
+
+Storage uses `WLWL_UPLOAD_DIR` (or `params.fileLocation` when unset). Keep that
+directory on persistent storage and copy existing PHP files there during migration.
+The legacy upload endpoint and staff RPC response shapes are unchanged.
+
+See [Frontend image integration](docs/FRONTEND_IMAGES.md) for the full API contract,
+Vue examples, public-access implications and deployment checklist.
+
 ## Docker
 
 The container is a **packaging option, not a change to the contract**: it sets only
