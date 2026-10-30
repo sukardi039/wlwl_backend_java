@@ -42,9 +42,15 @@ Store the **ID**, not a machine-local path, backend hostname, or temporary blob 
 
 Uploading stores an image only. It does **not** create/update a staff record or change
 the staff RPC response shape. Set the edited staff model's `staffPhoto` to `id`, and
-persist it through the application's staff-save workflow. This media API does not
-add a staff-save endpoint. Existing staff responses still contain `staffPhoto`, not
-an automatically generated `photoUrl`.
+persist it through the staff RPC: HTTP `POST /backend/staff/` with
+`{"restkey":"<key>","method":"PUT","qdata":{...}}`. Include `staffId` (`-1` for new
+staff), `staffName`, `staffDescription`, `staffSelfIntroduction`, `staffInterview`,
+`staffPhoto`, `skillsProfile`, `moraleProfile`, `efficiencyProfile`, `yearsWorked`
+and `experience`. Integer fields can be numbers or integer strings. The response is
+`200` with a one-row array including the saved ID and profile display expansions;
+an unknown update ID returns 204, invalid integer fields/missing qdata return 400.
+Existing staff responses still contain `staffPhoto`, not an automatically generated
+`photoUrl`. The media upload itself does not save the staff record.
 
 ## Vue/browser implementation
 
