@@ -64,7 +64,21 @@ public final class PhpJson {
         }
     }
 
-    /** JsonNode -> PHP value: objects become PhpArray (with key coercion), arrays Lists. */
+    /**
+     * JsonNode -> PHP value: BOTH JSON objects and JSON arrays become {@link PhpArray}.
+     *
+     * <p>PHP has a single container type — an array is an ordered hash map, and a "list" is only an
+     * array whose keys happen to be 0..n-1 — so json_decode yields the same thing for {@code {...}}
+     * and {@code [...]}. Decoding arrays into {@code java.util.List} instead kept only half of that
+     * model: {@code PhpArray.child(key)} reuses a PhpArray but *replaces* anything else, so every
+     * mutating helper that walked into a 0-based array (summary, history, debug, bossReview,
+     * log.action, task_work, per-member message) silently started from an empty array and dropped
+     * what the client had sent back. See PORTING_NOTES §38.
+     *
+     * <p>{@link PhpArray#isList()} re-derives the shape on the way out (0-based consecutive integer
+     * keys -> JSON array, anything else -> JSON object), which is exactly json_encode's rule, so
+     * this changes the in-memory type only — the wire format is unchanged.
+     */
     public static Object fromJson(JsonNode n) {
         if (n == null || n.isNull()) return null;
         if (n.isObject()) {
@@ -77,9 +91,10 @@ public final class PhpJson {
             return a;
         }
         if (n.isArray()) {
-            List<Object> list = new ArrayList<>(n.size());
-            for (JsonNode c : n) list.add(fromJson(c));
-            return list;
+            PhpArray a = new PhpArray();
+            long i = 0;
+            for (JsonNode c : n) a.put(i++, fromJson(c));
+            return a;
         }
         if (n.isTextual()) return n.asText();
         if (n.isBoolean()) return n.asBoolean();

@@ -1730,3 +1730,105 @@ Do not byte-compare stored bodies across the two systems.
 * `round2()` (`DrillAction:767`) uses `Math.round`, i.e. half-up toward +∞, where PHP's
   `round($x, 2)` rounds half away from zero. Only negative values differ and every current caller
   is ≥ 0, so it is latent — but do not reuse `round2` for signed values.
+
+## 38. PHP arrays are ordered maps; Java has Lists and Maps — fix at the boundary
+
+### Symptom
+
+A finished drill's `content.summary` held **only the last step**, and `content.history` only the
+last step's rows. Consequences in the report: the weekly chart (每周团队状态数据图) had a single
+point ("End" only), and because `ReportResult.vue:22,31` compares **`summary[0]`** against
+`current`, every improvement delta was computed against the *last* snapshot and came out zero — so
+the evaluation looked empty rather than wrong.
+
+### Why the Vue 2 + PHP system never had this
+
+PHP has ONE container type. An array is an ordered hash map, and a "list" is not a type — it is
+just an array whose keys happen to be `0..n-1`. `json_decode($x, true)` returns that type for both
+`{...}` and `[...]`, so
+
+```php
+$a = json_decode($json, true);   // same type either way
+$a['summary'][] = $entry;        // appends to what arrived
+json_encode($a);                 // shape re-derived from the keys
+```
+
+is lossless **by construction**. The client and the wire format were never the problem.
+
+### What the port did
+
+Java has two types, and Jackson preserves the distinction. The port correctly created `PhpArray`
+(an ordered map with PHP's key coercion, `append()` = max-int-key + 1, `isList()` =
+`json_encode`'s array rule) — but `fromJson` only used it for JSON **objects**; JSON **arrays**
+became `java.util.ArrayList`. `PhpArray.child(key)` reuses a `PhpArray` and **replaces** anything
+else, so every mutating helper that walked into a 0-based array silently started from an empty
+array:
+
+| key | keys | decoded as | result |
+|---|---|---|---|
+| `members`, `orders`, `day`, `week`, `analysis`, `manpower` | 1-based / named | `PhpArray` | mutated correctly |
+| `summary`, `history`, `debug`, `bossReview`, `log.action`, `task_work`, `message` | 0-based | `List` | **wiped every step** |
+
+That split is why the drill "mostly worked" and the damage looked like a report bug: the objects
+kept their state, only the list-shaped keys were lost.
+
+**`task_work` is the functional casualty**, not just the report. It holds the per-stage completion
+counter, and PHP requires `worked >= passingRate` before a stage passes — otherwise the order is
+discarded with `state = -1`. With `task_work` reset every step, `worked` never accumulated, so any
+task configured with `passingRate >= 2` killed every order on first completion. The schema default
+is `passingRate 1`, which is why this could look like "nothing moves" only on some products.
+
+Note: `passingRate` is read from **`content.task_eff`** (built by init from `taskefficiency`), not
+from the table at play time, so editing the table does not change a drill already in flight — and a
+test that wants `passingRate > 1` must set it in the content blob.
+
+### The fix
+
+Decode arrays into `PhpArray` as well (`PhpJson.fromJson`), keyed `0..n-1`:
+
+```java
+if (n.isArray()) {
+    PhpArray a = new PhpArray();
+    long i = 0;
+    for (JsonNode c : n) a.put(i++, fromJson(c));
+    return a;
+}
+```
+
+The wire format does not change: `isList()` re-derives array-vs-object from the keys exactly as
+`json_encode` does, so anything not mutated re-encodes to the shape it arrived in (`[]` stays `[]`,
+`{"1":…}` stays an object). This is a type change, not an output change — which is why it is safe
+for all modules at once.
+
+The three `mutableChild()` copies (`DrillCommon:626`, `DrillAction:1137`, `DrillEnvironment:306`)
+already performed this conversion; they are the evidence that the knowledge existed but was applied
+site by site, wherever someone happened to notice. Their `List` branches are now dead.
+
+### Tests, and the harness rule that matters
+
+* `PhpJsonDecodeFidelityTest` — decodes client-shaped JSON and asserts **no `java.util.List`
+  survives anywhere in the tree** (that single invariant makes this class of bug impossible to
+  reintroduce quietly), that `child()` reuses a decoded array, and that re-encoding reproduces
+  PHP's array-vs-object rule.
+* `DrillSummaryAccumulationTest` — posts `content` as JSON three times (INTRODUCTION then two
+  MORE_ACTIONS) and asserts three summary entries in order, with `summary[0]` remaining the first
+  snapshot, plus surviving history/bossReview/debug.
+* `DrillOrderProgressTest.taskWorkAccumulatesAcrossSteps` — with `passingRate = 3` the counter must
+  read 1 then 2 across steps (it read 1 both times before the fix).
+
+**Harness rule:** content under test must arrive as JSON and go through `fromJson`, exactly as the
+client sends it. Unit tests that build `PhpArray` by hand exercise only the half of the model that
+was always correct — that is how both this bug and the `eq(null, "")` bug stayed green.
+
+### Data already lost
+
+Not recoverable from the stored content (each step kept only its own summary). It *can* be
+reconstructed from the `drilldetail` timeline, since every step's row carries each member's
+skills/morale/efficiency plus the day and action — exactly what `summary[]`/`history[]` are derived
+from. That is a separate decision, only worth it if evaluations were already issued.
+
+### Frontend workaround
+
+Unnecessary after this fix. Index-keyed objects (`{"0":…,"1":…}`) still decode to `PhpArray` — that
+is precisely *why* they worked — so the workaround is harmless and can be removed after the fixed
+backend is deployed.

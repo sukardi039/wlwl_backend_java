@@ -246,4 +246,60 @@ class DrillOrderProgressTest {
         assertThat(summary.size()).isGreaterThan(0);
         assertThat(summary.get(summary.size() - 1).path("orderDone").asInt()).isEqualTo(completed);
     }
+    /**
+     * `task_work` is a 0-based array too, and it is the counter that decides whether a completed
+     * stage may advance: PHP requires {@code worked >= passingRate} before the stage passes, and
+     * discards the order ({@code state = -1}) until that many have been produced.
+     *
+     * <p>Because the counter lives in a 0-based array it was decoded as a {@code List} and reset to
+     * empty every step, so {@code worked} never accumulated: with the schema default
+     * {@code passingRate = 1} nothing showed, but as soon as a task is configured with 2 or more,
+     * every order died on its first completion and progress stopped dead.
+     */
+    @Test
+    @DisplayName("task_work accumulates across steps, so passingRate > 1 can eventually be met")
+    void taskWorkAccumulatesAcrossSteps() throws Exception {
+        ObjectNode content = initialContent();
+        // passingRate is read from content.task_eff (built by init from taskefficiency), not the DB
+        for (JsonNode te : content.get("task_eff")) {
+            ((ObjectNode) te).put("passingRate", 3.00);
+        }
+        // three orders: the first two are discarded while the stage fills up
+        ObjectNode orders = (ObjectNode) content.get("orders");
+        orders.putObject("2").put("day", 1);
+        orders.putObject("3").put("day", 1);
+        ((ObjectNode) content.get("control")).put("totalOrders", 4);   // PHP iterates d < totalOrders
+
+        JsonNode body = post(content, STEP, DAY);
+        content = (ObjectNode) body.get("content");
+        int step = body.get("stepnumber").asInt();
+        int day = body.get("daynumber").asInt();
+        assertThat(content.path("task_work").path(0).path("worked").asInt())
+                .as("first completion of stage 1").isEqualTo(1);
+
+        body = post(content, step, day);
+        content = (ObjectNode) body.get("content");
+        step = body.get("stepnumber").asInt();
+        day = body.get("daynumber").asInt();
+        assertThat(content.path("task_work").path(0).path("worked").asInt())
+                .as("the counter must carry over from the previous step, not restart at 1")
+                .isEqualTo(2);
+
+        body = post(content, step, day);
+        content = (ObjectNode) body.get("content");
+
+        assertThat(content.path("task_work").path(0).path("worked").asInt())
+                .as("at passingRate the counter resets").isZero();
+
+        // The third order passed stage 1 and moved on to stage 2 (it is then discarded there, since
+        // every stage in this fixture also demands three completions — that is the PHP rule, not a
+        // defect). Evidence of the pass: stage 1 completed AND stage 2 was assigned.
+        boolean passedStage1 = false;
+        for (JsonNode o : content.get("orders")) {
+            if (o.path("log").path("1").path("completedDay").asInt() >= 1 && o.path("log").has("2")) {
+                passedStage1 = true;
+            }
+        }
+        assertThat(passedStage1).as("an order must pass stage 1 once passingRate is met").isTrue();
+    }
 }

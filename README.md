@@ -15,7 +15,7 @@ the same status codes, and the same authentication quirks.
 | PHP-faithful nested array mapping | done and tested |
 | Auth (`restsession` affected-rows gate) | done and tested |
 | Login + MySQL `PASSWORD()` hashing | done and tested |
-| Tests | **294 passing** (`mvn verify`, 43 test classes, verified 2026-10-31) |
+| Tests | **300 passing** (`mvn verify`, 45 test classes, verified 2026-10-31) |
 
 The largest module, and the only one that needed a decomposition plan:
 
