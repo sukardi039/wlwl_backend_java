@@ -2,6 +2,11 @@
 
 Decisions, deliberate divergences, and the traps that break parity silently.
 
+**Target runtime: PHP 5.3** (Windows/IIS). This matters for semantics, not just syntax: 5.3's
+`/` returns `false` on a zero divisor instead of `INF` (PHP 7) and does not throw (PHP 8), and
+`JSON_UNESCAPED_UNICODE` does not exist until 5.4. See §37 for both, with the interpreter source
+they are quoted from. When a formula looks wrong, check it against 5.3 before "fixing" it.
+
 ---
 
 ## 1. Architecture decision: Spring JDBC, not JPA/Hibernate
@@ -1670,12 +1675,53 @@ Two things that make that test non-obvious, and cost time to discover:
   inserted. `schema-test.sql` already seeds `DD1b` at step 2 / day 3, so a test posting step 0
   reads that stale row and concludes nothing happened. Post above the seeded step.
 
-### Still open (measured, not guessed)
+### RESOLVED: `moraleOld == 0` is already correct — production is PHP 5.3
 
-* `moraleOld == 0` in the efficiency branch: PHP 7 emits a warning and divides by zero, producing
-  `INF` → `min(120, ...)` = **120**; PHP 8 throws `DivisionByZeroError` → 500. The port substitutes
-  a 0 ratio (`DrillCommon:754`, `:837`, `DrillAction:411`). Needs a ruling on which behaviour to
-  match before touching it.
+The three division sites (`commonLib:108`, `:239`, `:313`, i.e. `DrillCommon:411`, `:754`, `:837`)
+divide by a member's morale, which can legitimately be exactly 0. The port guards the ratio to 0.
+That was originally written as a "safe" substitution and then questioned against PHP 7/8
+semantics — **both of those are wrong for this deployment, and the guard happens to be exact.**
+
+The runtime is **PHP 5.3**, and 5.3's `div_function` (Zend/zend_operators.c) sets the result to
+**`BOOL false`** for a zero divisor in *every* numeric type pair (LONG/LONG, DOUBLE/LONG,
+LONG/DOUBLE, DOUBLE/DOUBLE), after `zend_error(E_WARNING, "Division by zero")`:
+
+```c
+case TYPE_PAIR(IS_DOUBLE, IS_LONG):
+    if (Z_LVAL_P(op2) == 0) {
+        zend_error(E_WARNING, "Division by zero");
+        ZVAL_BOOL(result, 0);          /* false — NOT INF */
+        return FAILURE;
+    }
+```
+
+So production computes `$skillsValue * false * abs($enhance)` = **0**, and
+`$efficiencyAdd = round(0 + impactTerm)` — the impact term alone. That is precisely what the Java
+guard produces, so **no change is needed** and none should be made. Do not "fix" it toward
+`INF → 120` (PHP 7 behaviour) or a thrown 500 (PHP 8): neither is what the server does.
+
+Consequences worth knowing:
+
+* The `NaN` corner cannot arise on 5.3: the `false` short-circuits before any `INF`, so
+  `0 * INF` never happens.
+* PHP 5.3 emits an `E_WARNING` per occurrence into the IIS/php error log. The port is silent. If
+  that log line is used operationally, add a WARN log at the same three sites rather than changing
+  the arithmetic.
+
+### Also PHP-5.3 specific: `JSON_UNESCAPED_UNICODE` does not exist
+
+`init.php:313` calls `json_encode($content, JSON_UNESCAPED_UNICODE)`, but that constant was added
+in **PHP 5.4** — 5.3's json extension registers only `JSON_HEX_*`, `JSON_FORCE_OBJECT`,
+`JSON_NUMERIC_CHECK` and the `JSON_ERROR_*` codes. On 5.3 the undefined constant is a notice and
+evaluates as a string, which casts to `0`, so production encodes with the **default escaping**:
+non-ASCII arrives as `\uXXXX`.
+
+The port writes raw UTF-8. That is *semantically* identical — every client runs `JSON.parse`, which
+decodes escapes — but it is not byte-identical in `drilldetail.content`, so do not compare stored
+bodies byte-for-byte across the two systems, and expect the Java rows to be marginally smaller.
+
+### Still open
+
 * `round2()` (`DrillAction:767`) uses `Math.round`, i.e. half-up toward +∞, where PHP's
   `round($x, 2)` rounds half away from zero. Only negative values differ and every current caller
   is ≥ 0, so it is latent — but do not reuse `round2` for signed values.
