@@ -1561,3 +1561,48 @@ Verification: `DrillActionIntroductionTest` (5 tests) asserts the 200, the
 `INTRODUCTION` phase with its step/day, that no stats or history change, that the row
 stores the next action and the advanced day, and that unknown actions still answer 501.
 Against the pre-fix code those tests fail with `expected: 200 but was: 501`.
+
+## 35. `staff/put.php` — filled in later, and where it deliberately differs
+
+The port originally implemented only `StaffModule.onPost`, so a staff save (`method: "PUT"`,
+`Staff.vue:153`) hit the default no-op handler and answered an **empty 200** — the screen
+reported "Save failed" and nothing was written. That was fixed in `dc84572`; the README's
+"32 of 32 live modules" table was over-optimistic for this module until then, because
+`staff/put.php` does exist in the PHP.
+
+The insert-vs-update rule and the column list are faithful: `staffId === -1` inserts (PHP
+passes `NULL` explicitly, Java relies on `AUTO_INCREMENT`), anything else updates the same
+ten columns in the same order.
+
+Three behaviours knowingly **differ** from the PHP. They are recorded here because the
+project's correctness argument is 1:1 parity, so a deviation must be a written decision,
+not a side effect:
+
+| `staff/put.php` | Java `onPut` | consequence |
+|---|---|---|
+| re-selects the result with `where staffName = '<new name>'` | re-selects `where staffId = ?` | With duplicate names the PHP returns **every** matching row (an array of N); renaming a member onto an existing name therefore returns 2+ rows in PHP and exactly 1 here. Selecting by the ID is arguably more correct, but it is not what production did. |
+| `if (!strlen($_SERVER['QUERY_STRING']))` → array, else a single **object** | always a one-row array | No live impact: the Vue client calls `/backend/staff/` with **no** query string (`Staff.vue:153`), which is the PHP's array branch. A call with `staff/?anything` would have returned an object in PHP. The same array-vs-object switch exists in other modules and *is* reproduced there. |
+| no validation at all — a non-numeric `yearsWorked` produced a MySQL error and a 500, a missing row produced 204 | `400` + JSON `{"error": …}` for a missing/invalid `qdata`, non-integer `staffId`/`yearsWorked`/`experience`, or a `staffId` that is neither `-1` nor positive | Intentional hardening, documented in `docs/BACKEND_REQUIREMENTS.md`. It is still a deviation: **PHP never answered 400 from this endpoint.** |
+
+If strict parity is ever required (e.g. an old client relies on the object shape), the two
+missing pieces are: read-back by `staffName`, and the query-string check around
+serialisation. Both are single `if`-sized changes; the 400 branch would have to go.
+
+## 36. Image API: additive, and why the old endpoint was left alone (2026-10-30)
+
+`/backend/media/images` (POST, `Authorization: Bearer`, multipart field `file`) and
+`GET /backend/media/images/{id}` are **new** endpoints, not a port — see
+`docs/FRONTEND_IMAGES.md`. The decision to keep `images/upload.php` byte-for-byte faithful
+alongside them is the important one:
+
+* `ImageUploadController` is unchanged, including the raw-query-string auth and the
+  one-second `usedOn` resolution behind `mysqli_affected_rows` (§31). The Vue client is
+  expected to migrate, but the old contract still answers exactly as production did.
+* `RestSessionService.authenticate()` is a new method, so the legacy affected-rows
+  `touch()` gate keeps its semantics. New APIs deliberately let DB errors propagate as
+  HTTP errors instead of the PHP's silent empty 200.
+* Both stores share `wlwl.upload.dir` / `WLWL_UPLOAD_DIR`, which is the `/data/uploads`
+  volume in the Dockerfile — so media does not introduce a second, un-backed-up location.
+* `GET` is unauthenticated by design (images are public to anyone with the URL, stated in
+  `FRONTEND_IMAGES.md`). `load()` validates the id against `IMAGE_ID` before
+  `root().resolve(id)`, so the path parameter cannot escape the upload directory.

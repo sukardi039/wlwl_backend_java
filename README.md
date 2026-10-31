@@ -9,7 +9,7 @@ the same status codes, and the same authentication quirks.
 
 | | |
 |---|---|
-| Modules ported | **32 of 32 live modules** — 2 more dropped by ruling (`signin`, `messages`). `drill/` is complete: 18 of 18 files, both `mod=ACTION` branches |
+| Modules ported | **32 of 32 live modules** — 2 more dropped by ruling (`signin`, `messages`). `drill/` is complete: 18 of 18 files, all three `mod=ACTION` actions. *Caveat:* `staff` shipped with only `onPost` until `dc84572`; `staff/put.php` is now implemented with three documented deviations (`PORTING_NOTES` §35) |
 | Gateway / RPC core | done and tested |
 | PHP type-faithful row mapping | done and tested |
 | PHP-faithful nested array mapping | done and tested |
