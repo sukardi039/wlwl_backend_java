@@ -618,7 +618,7 @@ public final class DrillAction {
                         order.put("state", 0L);
                     }
                     if (num(order.get("state")) == (t - 1)
-                            && eq(order.get("assignedTo"), "")
+                            && phpEmptyString(order.get("assignedTo"))
                             && num(m.get("workAvailable")) > 0
                             && num(m.get("workingOn")) == 0) {
                         Object taskName = m.get("task");
@@ -664,17 +664,17 @@ public final class DrillAction {
                 }
             } else {
                 if (state >= 0) {
-                    if (eq(assignedTo, "") && workNeeded == 0) {
+                    if (phpEmptyString(assignedTo) && workNeeded == 0) {
                         PhpArray cell = mutableChild(orderStatus, String.valueOf((long) state + 1));
                         cell.put("state", (long) state + 1);
                         cell.put("waitAssignment", num(cell.get("waitAssignment")) + 1);
-                    } else if (!eq(assignedTo, "") && workNeeded > 0) {
+                    } else if (!phpEmptyString(assignedTo) && workNeeded > 0) {
                         PhpArray cell = mutableChild(orderStatus, String.valueOf((long) state));
                         cell.put("state", state);
                         cell.put("inProgress", num(cell.get("inProgress")) + 1);
                     }
                     for (long t = 1; t < 6; t++) {
-                        if ((state > t) || (state == t && eq(assignedTo, "") && workNeeded == 0)) {
+                        if ((state > t) || (state == t && phpEmptyString(assignedTo) && workNeeded == 0)) {
                             PhpArray cell = mutableChild(orderStatus, String.valueOf(t));
                             cell.put("done", num(cell.get("done")) + 1);
                         }
@@ -1088,6 +1088,21 @@ public final class DrillAction {
 
     private static boolean eq(Object a, Object b) {
         return a == null ? b == null : a.toString().equals(b == null ? null : b.toString());
+    }
+
+    /**
+     * PHP {@code $v == ''}, which is what these order gates actually mean.
+     *
+     * <p>This is NOT {@link #eq}: for a MISSING key PHP's loose comparison is
+     * {@code null == ''} -> <b>true</b>, whereas {@code eq(null, "")} is false because it models
+     * only the non-null case. That difference freezes the whole drill: init.php creates orders
+     * with just a {@code day}, and the PHP's {@code $contentr[...]['assignedTo'] = ''} typo
+     * (action.php:629) means {@code assignedTo} is never written, so the assignment gate in
+     * action.php:631 depends on that loose comparison succeeding. With {@code eq} it never
+     * matched, no order was ever handed to a member, and neither task nor team progress moved.
+     */
+    private static boolean phpEmptyString(Object v) {
+        return v == null || v.toString().isEmpty();
     }
 
     // ------------------------------------------------------------------ helpers

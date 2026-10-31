@@ -1606,3 +1606,76 @@ alongside them is the important one:
 * `GET` is unauthenticated by design (images are public to anyone with the URL, stated in
   `FRONTEND_IMAGES.md`). `load()` validates the id against `IMAGE_ID` before
   `root().resolve(id)`, so the path parameter cannot escape the upload directory.
+
+## 37. Orders never moved: `null == ''` is TRUE in PHP and FALSE via `eq()`
+
+Symptom: task progress never advanced, so team progress never advanced — every drill, not just
+some data.
+
+The PHP's order lifecycle depends on two accidents being true at once:
+
+1. `init.php:213` creates each order with **only** a `day`. No `state`, no `assignedTo`.
+2. `action.php:629` writes the empty assignee into a **misspelled variable**
+   (`$contentr['orders'][$d]['assignedTo'] = '';` — note the `r`), so the real order still has no
+   `assignedTo` key.
+
+Then `action.php:631` accepts the order:
+
+```php
+if (($content['orders'][$d]['state'] == ($t - 1)) && ($content['orders'][$d]['assignedTo'] == '') && ...)
+```
+
+`$content['orders'][$d]['assignedTo']` is missing, and PHP evaluates `null == ''` as **true**, so a
+fresh order is assignable. The typo is load-bearing: initialising the key would be harmless, but
+*not* initialising it is what the comparison relies on.
+
+The port reproduced both accidents faithfully — and then compared with `eq()`:
+
+```java
+private static boolean eq(Object a, Object b) {
+    return a == null ? b == null : a.toString().equals(...);   // eq(null, "") == false
+}
+```
+
+`eq` models PHP `==` only for **non-null** operands. So the gate was false for every fresh order,
+`assignedTo` was never written (it is only written inside that skipped block), `cal_works` never
+ran, `orderStatus.ordersCompleted` stayed 0, and `weekSummary` found no completed deals. Nothing
+moved, and every request still answered 200.
+
+Fix: a purpose-built predicate, used only where PHP compares a possibly-missing order/member field
+against `''`:
+
+```java
+/** PHP $v == '': a missing key (null) equals the empty string. */
+private static boolean phpEmptyString(Object v) { return v == null || v.toString().isEmpty(); }
+```
+
+Four sites in `DrillAction` (`:621` assignment, `:667`/`:671`/`:677` order-status buckets).
+`eq()` itself was deliberately NOT changed — it is used for many comparisons that are correct today,
+and PHP's loose rules are not uniform (`null == 0` is true, `null == '0'` is false).
+
+Related: `workNeeded == 0` and `workingOn == 0` needed no change, because `num(null)` is 0, which
+already matches PHP's `null == 0`.
+
+Regression test: `DrillOrderProgressTest` (2 tests) drives a whole order through all five stages
+and asserts `ordersCompleted`, the week counters and `summary[].orderDone`. Against the previous
+code both fail with `expected: "1" but was: ""` (nothing assigned).
+
+Two things that make that test non-obvious, and cost time to discover:
+
+* **A member works only one stage.** PHP routes orders through five stages and gates assignment on
+  `substr($member['task'], 0, 1) == $t`, so the fixture needs one member per stage (task names
+  `1-Inspect` … `5-Deliver`). One member can never close an order on its own.
+* **The reply is the latest drilldetail row for the drill**, not necessarily the row you just
+  inserted. `schema-test.sql` already seeds `DD1b` at step 2 / day 3, so a test posting step 0
+  reads that stale row and concludes nothing happened. Post above the seeded step.
+
+### Still open (measured, not guessed)
+
+* `moraleOld == 0` in the efficiency branch: PHP 7 emits a warning and divides by zero, producing
+  `INF` → `min(120, ...)` = **120**; PHP 8 throws `DivisionByZeroError` → 500. The port substitutes
+  a 0 ratio (`DrillCommon:754`, `:837`, `DrillAction:411`). Needs a ruling on which behaviour to
+  match before touching it.
+* `round2()` (`DrillAction:767`) uses `Math.round`, i.e. half-up toward +∞, where PHP's
+  `round($x, 2)` rounds half away from zero. Only negative values differ and every current caller
+  is ≥ 0, so it is latent — but do not reuse `round2` for signed values.
