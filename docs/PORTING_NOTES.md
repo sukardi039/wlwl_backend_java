@@ -1832,3 +1832,50 @@ from. That is a separate decision, only worth it if evaluations were already iss
 Unnecessary after this fix. Index-keyed objects (`{"0":…,"1":…}`) still decode to `PhpArray` — that
 is precisely *why* they worked — so the workaround is harmless and can be removed after the fixed
 backend is deployed.
+
+---
+
+## 39. Handoff: where things live, and how this port is built
+
+Everything a fresh session needs before touching wlwl, without re-deriving it from chat logs.
+
+**Documents (in order of authority):**
+
+| Path | Role |
+|---|---|
+| `/opt/data/wlwl_parity_ledger.md` | **Authority.** Per-module status, counts, open risks, rulings R1–R5 |
+| `/opt/data/wlwl_backend_java/docs/PORTING_NOTES.md` | This file — decisions, divergences, traps, per-module contracts |
+| `/opt/data/wlwl_schema_real.md` | Production schema reference (39 tables + 5 view definitions); copy lives at `db/reference/` |
+| `wlwl_backend_java/README.md` | Run, build, CI/CD, upload endpoint, Docker |
+| `docs/BACKEND_REQUIREMENTS.md`, `docs/FRONTEND_IMAGES.md` | Runtime env vars, upload volume, client image handling |
+
+**Repositories:**
+
+- `sukardi039/wlwl_backend` — PHP original, single snapshot commit `8af21c1` (no history to bisect;
+  every "who changed this and why" question must be answered from the code itself).
+- `sukardi039/wlwl_backend_java` — the Spring Boot port (this repo).
+- `sukardi039/wlwl_foundation` — Vue 2 + Vuetify client; the RPC envelope and blob shapes are defined
+  by what it sends, not by the PHP alone.
+
+**Build environment (agent host):**
+
+- No passwordless sudo (agent uid 10000). Java toolchain is at `/opt/data/toolchain` —
+  Temurin 21 + Maven 3.9.9; `source env.sh` there before any `mvn` command.
+- CI is the delivery path (README §"Build and deploy"): `mvn -B verify` → jar artifact → tag `v*`
+  Release → `docker` job builds and smoke-tests. Nothing is compiled on the target server.
+- Dockerfile is two-stage and runs as **UID 10001**; the `HEALTHCHECK` proves liveness only (no DB).
+
+**Git/remote gotchas:**
+
+- One deploy key per repo, wired through repo-local `core.sshCommand` (`IdentitiesOnly=yes`), not a
+  shared `~/.ssh/config`:
+  - backend_java → `/opt/data/home/.ssh/id_ed25519_wlwl`
+  - foundation → `/opt/data/home/.ssh/id_ed25519_wlwl_foundation`
+- **`wlwl_foundation` history was rewritten once.** Do not `git rebase` on a hunch: first run
+  `git merge-base --is-ancestor <sha> origin/main` (or inspect `git merge-base HEAD origin/main`).
+  The full recovery procedure is in the `legacy-port-parity-verification` skill.
+
+**Status at handoff (2026-11-01):** backend port complete and tested; `signin/` and `messages/` were
+dropped with the ruling and risk recorded in §16/§17. Remaining work is operational (deploy, smoke on
+the target server), not porting.
+
